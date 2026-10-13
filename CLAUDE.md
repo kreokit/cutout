@@ -1,6 +1,8 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
+**Status (2026-10-13):** Milestone 1 (Scaffold) is done and tested. Next: Milestone 2 (Cutout).
+
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
 ## What we are building
@@ -15,7 +17,7 @@ Target users: creators worldwide (thumbnails, product photos, social posts, prof
 - **No proprietary code or assets.** Build only from public docs, open-source libraries and observed behaviour. Never copy another product's name, logo, icons or exact UI.
 - **Offline first.** No servers, no accounts, no telemetry. The only network call is the one-time model download.
 - **Licences must stay MIT/Apache-compatible**, and this includes **model weights**. Only use models whose weights are MIT, Apache-2.0 or BSD. **Never** use non-commercial or "research only" weights (for example RMBG by BRIA is non-commercial, so it's not allowed). Verify each model's license from its official source before adding it, and record it in `THIRD-PARTY-LICENSES.md`.
-- Small, testable steps. After each milestone: `cargo test`, `pnpm test`, and run the app. Small topic-based commits.
+- Small, testable steps. After each milestone: `cargo test`, `pnpm test`, and run the app. Small topic-based commits, **each one buildable and passing tests on its own**.
 - Only screenshot the KreoKit window, never the full screen.
 
 ## Reuse from KreoKit Captions
@@ -64,7 +66,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 ## Milestones
 
-1. **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
+1. ✅ **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
 2. **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
 3. **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
