@@ -186,3 +186,71 @@
   color: var(--color-danger);
   overflow-wrap: anywhere;
 }
+
+/* Before / After / Compare */
+
+.stage-area {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--color-stage);
+}
+
+.view-switch {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--space-3);
+}
+
+.checkerboard {
+  position: relative;
+}
+
+.checkerboard img {
+  position: absolute;
+  inset: 0;
+}
+
+.compare-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  margin-left: -12px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.compare-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 11px;
+  width: 2px;
+  background: var(--color-text);
+}
+
+.compare-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: var(--color-bg);
+}
+
+.compare-divider:focus-visible {
+  outline: none;
+}
+
+.compare-divider:focus-visible .compare-grip {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}

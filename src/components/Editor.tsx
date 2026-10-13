@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeftRight, Download } from "lucide-react";
+import { Split, splitAt, splitForKey } from "../lib/compare";
 import { Size, fitContain } from "../lib/fit";
 import { fileName, formatBytes } from "../lib/images";
 import { cutoutKey, isDownloaded, useCutouts } from "../store/cutouts";
 import { openPaths, useSession } from "../store/session";
-import { Button, IconButton, SectionLabel, Tooltip } from "../ui";
+import { Button, IconButton, SectionLabel, Segmented, Tooltip } from "../ui";
 import { CutoutSection, StageStatus } from "./CutoutStatus";
 import { TopBar } from "./TopBar";
 import "../styles/editor.css";
@@ -25,6 +26,7 @@ export function Editor() {
   const ready = useCutouts((s) => isDownloaded(s.models, model));
   const state = useCutouts((s) => (image ? s.byImage[cutoutKey(image.path, model)] : undefined));
   const run = useCutouts((s) => s.run);
+  const [view, setView] = useState<View>("after");
 
   // Cut out the shown image as soon as the model is there.
   useEffect(() => {
@@ -92,11 +94,28 @@ export function Editor() {
       </TopBar>
 
       <div className="editor-main">
-        <Stage
-          src={convertFileSrc(state?.status === "done" ? state.result.cutout : image.path)}
-          size={image}
-          status={<StageStatus state={state} onRetry={() => void run(image.path, { retry: true })} />}
-        />
+        <div className="stage-area">
+          <div className="view-switch">
+            <Segmented
+              label="View"
+              value={view}
+              onChange={setView}
+              disabled={state?.status !== "done"}
+              options={[
+                { value: "before", label: "Before" },
+                { value: "after", label: "After" },
+                { value: "compare", label: "Compare" },
+              ]}
+            />
+          </div>
+          <Stage
+            original={convertFileSrc(image.path)}
+            cutout={state?.status === "done" ? convertFileSrc(state.result.cutout) : null}
+            view={view}
+            size={image}
+            status={<StageStatus state={state} onRetry={() => void run(image.path, { retry: true })} />}
+          />
+        </div>
         <aside className="inspector" aria-label="Inspector">
           <section className="inspector-section">
             <SectionLabel>Image</SectionLabel>
@@ -118,12 +137,30 @@ export function Editor() {
   );
 }
 
-/** The image fitted (never enlarged) to the free space, on a transparency checkerboard. */
-function Stage({ src, size, status }: { src: string; size: Size; status: React.ReactNode }) {
+export type View = "before" | "after" | "compare";
+
+/**
+ * The image fitted (never enlarged) to the free space, on a transparency checkerboard:
+ * the original, the cutout, or both split by a draggable divider.
+ */
+function Stage({
+  original,
+  cutout,
+  view,
+  size,
+  status,
+}: {
+  original: string;
+  cutout: string | null;
+  view: View;
+  size: Size;
+  status: React.ReactNode;
+}) {
   const stage = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Size>({ width: 0, height: 0 });
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+  const [split, setSplit] = useState<Split>(0.5);
+  useEffect(() => setFailed(false), [original, cutout]);
 
   useLayoutEffect(() => {
     const el = stage.current;
@@ -136,17 +173,67 @@ function Stage({ src, size, status }: { src: string; size: Size; status: React.R
   }, []);
 
   const fit = fitContain(size, box, STAGE_PADDING);
+  const shown = cutout === null ? "before" : view;
+  const onError = () => setFailed(true);
   return (
     <div className="stage" ref={stage}>
       {failed ? (
         <p className="stage-error">This image can't be shown. It may be damaged or use an unusual format.</p>
       ) : (
         <div className="checkerboard" style={{ width: fit.width, height: fit.height }}>
-          <img src={src} alt="" draggable={false} onError={() => setFailed(true)} />
+          {shown !== "before" && <img src={cutout!} alt="" draggable={false} onError={onError} />}
+          {shown !== "after" && (
+            <img
+              src={original}
+              alt=""
+              draggable={false}
+              onError={onError}
+              style={shown === "compare" ? { clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` } : undefined}
+            />
+          )}
+          {shown === "compare" && <Divider split={split} onChange={setSplit} />}
         </div>
       )}
       {fit.scale > 0 && <span className="stage-zoom">{Math.round(fit.scale * 100)}%</span>}
       {status}
+    </div>
+  );
+}
+
+/** The compare divider: drag it, or focus it and use the arrow keys. */
+function Divider({ split, onChange }: { split: Split; onChange: (split: Split) => void }) {
+  const move = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+    onChange(splitAt(e.clientX, rect.left, rect.width));
+  };
+  return (
+    <div
+      className="compare-divider"
+      style={{ left: `${split * 100}%` }}
+      role="slider"
+      tabIndex={0}
+      aria-label="Compare before and after"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(split * 100)}
+      aria-valuetext={`${Math.round(split * 100)}% original`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        move(e);
+      }}
+      onPointerMove={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) move(e);
+      }}
+      onKeyDown={(e) => {
+        const next = splitForKey(split, e.key, e.shiftKey);
+        if (next === null) return;
+        e.preventDefault();
+        onChange(next);
+      }}
+    >
+      <span className="compare-grip" aria-hidden>
+        <ChevronsLeftRight size={14} strokeWidth={2} />
+      </span>
     </div>
   );
 }
