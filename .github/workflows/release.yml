@@ -1,0 +1,162 @@
+# Builds unsigned KreoKit Cutout bundles for macOS (Apple Silicon + Intel), Windows and
+# Linux and uploads them to a DRAFT GitHub release. Run it from the Actions tab
+# ("Run workflow", optionally with another tag) or by pushing a v* tag.
+# Adapted from KreoKit Captions, without the FFmpeg and whisper.cpp steps.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v0.1.0-alpha
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Tests and licence checks
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Linux packages for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Rust dependency licences (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          command: check licenses bans sources
+      - name: THIRD-PARTY-LICENSES.md is up to date
+        run: python scripts/third_party.py --check
+
+  release:
+    name: Draft release
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "KreoKit Cutout ${TAG#v}" \
+              --notes-file "docs/release-notes/$TAG.md"
+          fi
+          echo "id=$(gh release view "$TAG" --json databaseId --jq .databaseId)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - name: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - name: Windows x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - name: Linux x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Linux packages for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2
+
+      # TODO(M2): ONNX Runtime (ort crate) library setup per target goes here.
+
+      - run: pnpm install --frozen-lockfile
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          releaseId: ${{ needs.release.outputs.id }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+
+      - name: Check the bundle contents
+        run: |
+          out="src-tauri/target/${{ matrix.target }}/release"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            app=$(ls -d "$out"/bundle/macos/*.app)
+            res="$app/Contents/Resources"
+            codesign --verify --deep --strict "$app" && echo "ad-hoc signature ok"
+          else
+            res="$out"
+          fi
+          for f in "$res/THIRD-PARTY-LICENSES.md"; do
+            [[ -f "$f" ]] && echo "ok  $f" || { echo "missing $f"; exit 1; }
+          done
