@@ -1,17 +1,30 @@
 mod images;
+mod models;
 mod recent;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 
 use images::ImageInfo;
+use models::{CutoutModel, DownloadProgress, ModelInfo};
+
+/// Set by `cancel`; checked by model downloads.
+#[derive(Default)]
+struct CancelFlag(Arc<AtomicBool>);
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|e| format!("cannot find app data folder: {e}"))
+}
+
+fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(data_dir(app)?.join("models"))
 }
 
 /// Runs blocking work (decoding, file I/O) off the async runtime.
@@ -57,6 +70,36 @@ async fn open_images(app: AppHandle, paths: Vec<String>) -> Result<Opened, Strin
             .map_err(|e| e.to_string())?;
     }
     Ok(opened)
+}
+
+#[tauri::command]
+fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
+    Ok(models::list(&models_dir(&app)?))
+}
+
+#[tauri::command]
+async fn download_model(
+    app: AppHandle,
+    cancel: State<'_, CancelFlag>,
+    model: CutoutModel,
+    on_progress: Channel<DownloadProgress>,
+) -> Result<(), String> {
+    let dir = models_dir(&app)?;
+    let cancel = cancel.0.clone();
+    cancel.store(false, Ordering::Relaxed);
+    blocking(move || {
+        models::download(model, &dir, &cancel, |p| {
+            let _ = on_progress.send(p);
+        })
+        .map(|_| ())
+    })
+    .await
+}
+
+/// Stops a running model download.
+#[tauri::command]
+fn cancel(cancel: State<'_, CancelFlag>) {
+    cancel.0.store(true, Ordering::Relaxed);
 }
 
 /// Recent images for the Home screen, newest first, with thumbnails where possible.
@@ -125,8 +168,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(CancelFlag::default())
         .invoke_handler(tauri::generate_handler![
             open_images,
+            list_models,
+            download_model,
+            cancel,
             list_recent,
             remove_recent,
             report_problem,
