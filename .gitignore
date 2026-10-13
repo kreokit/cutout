@@ -1,0 +1,29 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.sw?
+
+# Rust build output (also in src-tauri/.gitignore)
+src-tauri/target/
+
+# AI models are downloaded into the app data dir; never commit them
+*.onnx
+*.onnx_data
+*.onnx.part
+/models/
+
+# Python bytecode
+__pycache__/
