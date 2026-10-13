@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { CpuCheck } from "./components/CpuCheck";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
 import { chooseImages } from "./components/TopBar";
@@ -31,6 +32,7 @@ function App() {
     <>
       {hasImages ? <Editor /> : <Home />}
       <ToastRegion />
+      <CpuCheck />
     </>
   );
 }

@@ -50,3 +50,14 @@
   text-transform: uppercase;
   color: var(--color-text-3);
 }
+
+/* Unsupported CPU dialog */
+
+.cpu-check-text {
+  color: var(--color-text-2);
+  margin-bottom: var(--space-3);
+}
+
+.cpu-check-text:last-child {
+  margin-bottom: 0;
+}

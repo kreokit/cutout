@@ -1,3 +1,4 @@
+mod cpu;
 mod cutout;
 mod images;
 mod models;
@@ -109,6 +110,10 @@ async fn cut_out(
     model: CutoutModel,
     on_progress: Channel<cutout::Stage>,
 ) -> Result<cutout::CutoutResult, String> {
+    let support = cpu::check();
+    if !support.supported {
+        return Err(cpu::unsupported_message(&support.missing));
+    }
     let models = models_dir(&app)?;
     if !model.is_downloaded(&models) {
         return Err(format!("the {} model is not downloaded", model.file_name()));
@@ -176,6 +181,17 @@ fn remove_recent(app: AppHandle, path: String) -> Result<(), String> {
     recent::remove(&data_dir(&app)?, &path)
 }
 
+/// Whether this CPU can run cutouts (see cpu.rs).
+#[tauri::command]
+fn cpu_support() -> cpu::CpuSupport {
+    cpu::check()
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 /// Where testers report problems: the bug-report form, with the app version filled in.
 fn report_problem_url() -> String {
     format!(
@@ -222,6 +238,8 @@ pub fn run() {
             list_recent,
             remove_recent,
             report_problem,
+            cpu_support,
+            quit_app,
             dev_startup_images
         ])
         .run(tauri::generate_context!())
