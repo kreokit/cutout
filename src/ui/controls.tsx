@@ -92,6 +92,8 @@ export interface SegmentOption<T extends string> {
   icon?: LucideIcon;
   /** Second line, e.g. "fast · 148 MB". */
   hint?: string;
+  /** This option can't be chosen (the others still can). */
+  disabled?: boolean;
 }
 
 /** Radio group drawn as joined buttons; arrow keys move the selection. */
@@ -119,7 +121,11 @@ export function Segmented<T extends string>({
         const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
         if (!delta || disabled) return;
         e.preventDefault();
-        const to = nextIndex(selected, delta, options.length);
+        let to = nextIndex(selected, delta, options.length);
+        for (let tries = 1; options[to].disabled && tries < options.length; tries++) {
+          to = nextIndex(to, delta, options.length);
+        }
+        if (options[to].disabled) return;
         onChange(options[to].value);
         refs.current[to]?.focus();
       }}
@@ -136,7 +142,7 @@ export function Segmented<T extends string>({
             role="radio"
             aria-checked={o.value === value}
             tabIndex={o.value === value || (selected < 0 && i === 0) ? 0 : -1}
-            disabled={disabled}
+            disabled={disabled || o.disabled}
             className="ui-segment"
             onClick={() => onChange(o.value)}
           >
