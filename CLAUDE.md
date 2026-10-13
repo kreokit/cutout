@@ -34,10 +34,12 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 - **Shell:** Tauri 2 (Rust) + React + TypeScript + Vite, pnpm
 - **Inference:** ONNX Runtime from Rust (`ort` crate), CPU by default, CoreML/DirectML later
-- **Models** (downloaded on first use into the app data dir, checksum-verified, never committed):
-  - **Fast:** a small, permissively licensed salient-object model (e.g. IS-Net or U²-Net family, Apache-2.0; verify)
-  - **Best:** a high-quality model (e.g. BiRefNet family, MIT; verify), lite variant if the full one is too slow on CPU
-  - Start with ONE model for M2; add the second in M5.
+- **Models** (downloaded on first use into the app data dir, checksum-verified, never committed). Licences verified 2026-10-13:
+  - **Fast: U²-Net (`u2net`, 320×320, 176 MB)**, Apache-2.0 (`xuebinqin/U-2-Net` repo licence covers the published weights). ONNX conversion from `danielgatis/rembg` (MIT) release `v0.0.0`
+  - **Best: BiRefNet_lite (general, Swin-T backbone, 1024×1024, 224 MB)**, MIT (`ZhengPeng7/BiRefNet` repo + HF card `ZhengPeng7/BiRefNet_lite`); ONNX `BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx` from the author's GitHub release `v1`
+  - **Excluded:** IS-Net / `isnet-general-use` (DIS repo licenses only "code and evaluation metric" as Apache-2.0; weights unclear; the `onnx-community/ISNet-ONNX` copy is AGPL-3.0), RMBG 1.4/2.0 (non-commercial), BEN2 full (commercial)
+  - **Mirror:** the app downloads only from our own GitHub release `models-v1` on `kreokit/cutout`, pinned by SHA-256. Each model file is uploaded there with its licence file and a source/attribution note. The original source URLs stay documented in `THIRD-PARTY-LICENSES.md`
+  - Start with Fast (U²-Net) in M2; add Best in M5.
 - **Image I/O:** the `image` crate (PNG, JPG, WebP, HEIC if feasible later)
 - **No FFmpeg** in v0.1 (images only). Video cutout is a later milestone.
 - **State:** Zustand. Projects are not needed in v0.1; recent files list only.
@@ -63,7 +65,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 ## Milestones
 
 1. **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
-2. **Cutout:** model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
+2. **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
 3. **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
 5. **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
