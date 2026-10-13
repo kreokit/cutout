@@ -16,6 +16,19 @@ pinned SHA-256 checksum.
 | U²-Net (`u2net`), © Xuebin Qin et al. | Fast cutout | Apache-2.0 | Weights: <https://github.com/xuebinqin/U-2-Net>. ONNX conversion: <https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx> (rembg, MIT) |
 | BiRefNet_lite (general, Swin-T), © Peng Zheng et al. | Best cutout | MIT | <https://github.com/ZhengPeng7/BiRefNet/releases/download/v1/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx>, model card <https://huggingface.co/ZhengPeng7/BiRefNet_lite> |
 
+## ONNX Runtime (compiled into the app)
+
+The AI models run with **ONNX Runtime 1.22.0**, © Microsoft Corporation, **MIT** licence
+(<https://github.com/microsoft/onnxruntime>), statically linked through the `ort` crate
+(2.0.0-rc.10, MIT OR Apache-2.0) from pyke's prebuilt libraries. ONNX Runtime contains
+third-party components (for example protobuf, Abseil, Eigen, XNNPACK), each under its own
+licence; their notices ship with the app as `licenses/ONNXRUNTIME-ThirdPartyNotices.txt`,
+next to `licenses/ONNXRUNTIME-LICENSE.txt`.
+
+On Windows, ONNX Runtime is linked against `DirectML.dll`. KreoKit Cutout does **not**
+ship that file: the copy that comes with Windows 10 (version 1903 or later) and Windows 11
+is used, and the app runs on the CPU only.
+
 ## Fonts (bundled)
 
 Inter (interface font), © The Inter Project Authors, **SIL Open Font License 1.1**; the
