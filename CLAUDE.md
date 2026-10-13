@@ -36,6 +36,10 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 - **Shell:** Tauri 2 (Rust) + React + TypeScript + Vite, pnpm
 - **Inference:** ONNX Runtime from Rust (`ort` crate), CPU by default, CoreML/DirectML later
+  - **Pinned: `ort` 2.0.0-rc.10 = ONNX Runtime 1.22.0, statically linked, on all platforms.** Reason: Intel Mac + macOS 12 support. rc.10 is the last `ort` with a prebuilt `x86_64-apple-darwin` library (rc.11+ and Microsoft's ONNX Runtime ≥ 1.24 dropped Intel Macs; Microsoft's 1.20–1.23 Intel builds need macOS 13.3). pyke's 1.22 library is built for macOS 13.3 too, but it was tested to link and run on macOS 12 (2026-10-13). tract (pure Rust) was measured as the fallback: 2.4× slower
+  - **Upgrade path:** when Intel Macs / macOS 12 are dropped, move to the newest `ort` + ONNX Runtime. To keep them, build ONNX Runtime ourselves for `x86_64-apple-darwin` (deployment target 12.0) and link it via `ORT_LIB_LOCATION`, or switch Intel Macs only to tract. Re-run the macOS 12 test and the CPU-baseline check (`cpu.rs`) after any upgrade
+  - Measured on the dev Mac (i5-6267U, 2 cores / 4 threads): U²-Net 0.9–1.1 s per image, BiRefNet_lite 13–22 s with a **peak of 8.5 GB RAM**
+  - **Best must work on 8 GB RAM machines without crashing (M5):** use ONNX Runtime memory settings (arena / memory pattern off), a lower input resolution, or check free memory first and show a clear warning. Test this before Best ships
 - **Models** (downloaded on first use into the app data dir, checksum-verified, never committed). Licences verified 2026-10-13:
   - **Fast: U²-Net (`u2net`, 320×320, 176 MB)**, Apache-2.0 (`xuebinqin/U-2-Net` repo licence covers the published weights). ONNX conversion from `danielgatis/rembg` (MIT) release `v0.0.0`
   - **Best: BiRefNet_lite (general, Swin-T backbone, 1024×1024, 224 MB)**, MIT (`ZhengPeng7/BiRefNet` repo + HF card `ZhengPeng7/BiRefNet_lite`); ONNX `BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx` from the author's GitHub release `v1`
@@ -75,6 +79,8 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 ## Tests (our oracle)
 
+- **Synthetic fixtures** (generated, exact masks) are the strict mask tests for now.
+- **Provisional reference masks:** the free-licensed photos get masks made with BiRefNet (full) and are labelled **"provisional, not ground truth"**. They're used only as a regression check (warn on big drops, never fail the build) until hand-made masks exist.
 - `fixtures/`: 5–8 images that are our own or free-licensed (Pexels/Pixabay/Unsplash license noted per file), covering a person with hair, a product on a table, a pet, a logo/flat graphic, and a low-contrast background. Each has a **hand-made reference mask**.
 - Mask quality per model: IoU and mean absolute error vs the reference, logged per image, with a minimum threshold enforced once the baseline is known.
 - Export round-trip: the exported PNG keeps the alpha channel; the JPG export has the chosen background, no alpha.
