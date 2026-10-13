@@ -400,4 +400,113 @@ mod tests {
         }
         assert!(failures.is_empty(), "below the minimum: {failures:?}");
     }
+
+    fn fixtures_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/photos")
+    }
+
+    /// Regression check on the free-licensed photos in fixtures/photos against their
+    /// *provisional* masks (made with BiRefNet, not ground truth): prints IoU, MAE and
+    /// timings, and warns (never fails) when IoU drops more than 0.05 below
+    /// `baseline-fast.json`. `KREOKIT_UPDATE_BASELINE=1` rewrites the baseline. Needs the
+    /// model: `KREOKIT_MODELS_DIR=<dir> cargo test --release photo_regression -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn photo_regression() {
+        use crate::synthetic::{iou, mae};
+        use std::collections::BTreeMap;
+        let model = CutoutModel::Fast;
+        let model_path = model.path_in(&crate::models::tests::dev_models_dir());
+        let fixtures = fixtures_dir();
+        let baseline_path = fixtures.join("baseline-fast.json");
+        let baseline: BTreeMap<String, (f64, f64)> = fs::read_to_string(&baseline_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+        let cache = std::env::temp_dir().join("kreokit-cutout-photos");
+        let _ = fs::remove_dir_all(&cache);
+        let engine = Engine::default();
+        let mut photos: Vec<PathBuf> = fs::read_dir(&fixtures)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| images::has_image_extension(p))
+            .collect();
+        photos.sort();
+        assert!(
+            photos.len() >= 5,
+            "expected the fixture photos in {}",
+            fixtures.display()
+        );
+
+        let mut measured = BTreeMap::new();
+        let mut warnings = Vec::new();
+        println!("| Photo | Size | IoU | MAE | Inference | Total |\n|---|---|---|---|---|---|");
+        for photo in &photos {
+            let name = photo.file_name().unwrap().to_string_lossy().into_owned();
+            let stem = photo.file_stem().unwrap().to_string_lossy();
+            let reference = fixtures.join(format!("masks/{stem}.provisional-mask.png"));
+            let reference = image::open(&reference).unwrap().to_luma8();
+            let result = cut_out(&engine, &model_path, &cache, model, photo, |_| {}).unwrap();
+            let mask = image::open(&result.mask).unwrap().to_luma8();
+            let (i, m) = (iou(&mask, &reference), mae(&mask, &reference));
+            let (w, h) = mask.dimensions();
+            println!(
+                "| {name} | {w}×{h} | {i:.3} | {m:.4} | {:.2} s | {:.2} s |",
+                result.timings.inference, result.timings.total
+            );
+            if let Some(&(base, _)) = baseline.get(&name)
+                && i < base - 0.05
+            {
+                warnings.push(format!("{name}: IoU {i:.3}, baseline {base:.3}"));
+            }
+            measured.insert(
+                name,
+                (
+                    (i * 1000.0).round() / 1000.0,
+                    (m * 10000.0).round() / 10000.0,
+                ),
+            );
+        }
+        for warning in &warnings {
+            println!("WARNING: big drop against the provisional masks: {warning}");
+        }
+        if std::env::var("KREOKIT_UPDATE_BASELINE").as_deref() == Ok("1") {
+            let json = serde_json::to_string_pretty(&measured).unwrap();
+            fs::write(&baseline_path, json + "\n").unwrap();
+            println!("wrote {}", baseline_path.display());
+        }
+    }
+
+    /// Timings for a 12-megapixel photo (4032×3024, a common phone size), three runs.
+    /// `KREOKIT_MODELS_DIR=<dir> cargo test --release timings_12_megapixels -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn timings_12_megapixels() {
+        let model = CutoutModel::Fast;
+        let model_path = model.path_in(&crate::models::tests::dev_models_dir());
+        let dir = std::env::temp_dir().join("kreokit-cutout-12mp");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let photo = image::open(fixtures_dir().join("product-mug.jpg")).unwrap();
+        let big = dir.join("mug-12mp.jpg");
+        photo
+            .resize_exact(4032, 3024, FilterType::Triangle)
+            .to_rgb8()
+            .save(&big)
+            .unwrap();
+        let engine = Engine::default();
+        for run in 1..=3 {
+            let cache = dir.join(format!("cache-{run}"));
+            let t = cut_out(&engine, &model_path, &cache, model, &big, |_| {})
+                .unwrap()
+                .timings;
+            println!(
+                "run {run}: load model {:.2}s, decode {:.2}s, preprocess {:.2}s, inference {:.2}s, \
+                 postprocess {:.2}s, save {:.2}s, total {:.2}s",
+                t.load_model, t.decode, t.preprocess, t.inference, t.postprocess, t.save, t.total
+            );
+        }
+    }
 }
