@@ -1,6 +1,9 @@
+mod cutout;
 mod images;
 mod models;
 mod recent;
+#[cfg(test)]
+mod synthetic;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -96,6 +99,46 @@ async fn download_model(
     .await
 }
 
+/// Cuts out the image at `path` with `model` (downloaded first via `download_model`) and
+/// lets the webview show the result. Stages go to `on_progress`.
+#[tauri::command]
+async fn cut_out(
+    app: AppHandle,
+    engine: State<'_, Arc<cutout::Engine>>,
+    path: String,
+    model: CutoutModel,
+    on_progress: Channel<cutout::Stage>,
+) -> Result<cutout::CutoutResult, String> {
+    let models = models_dir(&app)?;
+    if !model.is_downloaded(&models) {
+        return Err(format!("the {} model is not downloaded", model.file_name()));
+    }
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cannot find the cache folder: {e}"))?;
+    let engine = engine.inner().clone();
+    let result = blocking(move || {
+        cutout::cut_out(
+            &engine,
+            &model.path_in(&models),
+            &cache,
+            model,
+            Path::new(&path),
+            |stage| {
+                let _ = on_progress.send(stage);
+            },
+        )
+    })
+    .await?;
+    for file in [&result.cutout, &result.mask] {
+        app.asset_protocol_scope()
+            .allow_file(file)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(result)
+}
+
 /// Stops a running model download.
 #[tauri::command]
 fn cancel(cancel: State<'_, CancelFlag>) {
@@ -169,10 +212,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(CancelFlag::default())
+        .manage(Arc::new(cutout::Engine::default()))
         .invoke_handler(tauri::generate_handler![
             open_images,
             list_models,
             download_model,
+            cut_out,
             cancel,
             list_recent,
             remove_recent,

@@ -25,6 +25,11 @@ serde_json = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 ureq = "3"
+# Pinned: ort 2.0.0-rc.10 (ONNX Runtime 1.22.0, statically linked) is the last release with a
+# prebuilt library for Intel Macs, and it runs on macOS 12. rc.11+ dropped x86_64-apple-darwin.
+# Upgrade path and details: CLAUDE.md ("Inference"). Re-test macOS 12 and cpu.rs after upgrading.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"] }
+ndarray = "0.16"
 sha2 = "0.11.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 

@@ -85,31 +85,46 @@ pub fn inspect(path: &Path) -> Result<ImageInfo, String> {
     })
 }
 
-/// The cached thumbnail for `image` (a JPEG, longest side 480 px, EXIF orientation
-/// applied), made on first use. A changed file gets a new thumbnail.
-pub fn thumbnail(dir: &Path, image: &Path) -> Result<PathBuf, String> {
+/// A key for caches derived from `image`: changes when the file is replaced or edited.
+pub fn cache_key(image: &Path) -> Result<String, String> {
     let modified = fs::metadata(image)
         .and_then(|m| m.modified())
         .map_err(|_| "image not found")?;
     let mut hasher = DefaultHasher::new();
     (image, modified).hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+/// Decodes the whole image at `path`, turned upright by its EXIF orientation.
+pub fn decode(path: &Path) -> Result<image::DynamicImage, String> {
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let mut decoder = ImageReader::open(path)
+        .and_then(|r| r.with_guessed_format())
+        .map_err(|e| format!("cannot open {name}: {e}"))?
+        .into_decoder()
+        .map_err(|e| format!("cannot read {name}: {e}"))?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder)
+        .map_err(|e| format!("cannot read {name}: {e}"))?;
+    img.apply_orientation(orientation);
+    Ok(img)
+}
+
+/// The cached thumbnail for `image` (a JPEG, longest side 480 px, EXIF orientation
+/// applied), made on first use. A changed file gets a new thumbnail.
+pub fn thumbnail(dir: &Path, image: &Path) -> Result<PathBuf, String> {
     let thumbs = dir.join("thumbnails");
-    let out = thumbs.join(format!("{:016x}.jpg", hasher.finish()));
+    let out = thumbs.join(format!("{}.jpg", cache_key(image)?));
     if out.is_file() {
         return Ok(out);
     }
-    let mut decoder = ImageReader::open(image)
-        .and_then(|r| r.with_guessed_format())
-        .map_err(|e| e.to_string())?
-        .into_decoder()
-        .map_err(|e| e.to_string())?;
-    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let mut img = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
-    img.apply_orientation(orientation);
-    // JPEG has no alpha: flatten transparent images onto the stage colour.
+    let mut img = decode(image)?;
     if img.width().max(img.height()) > THUMBNAIL_SIZE {
         img = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     }
+    // JPEG has no alpha: flatten transparent images onto the stage colour.
     let thumb = flatten(&img, [10, 10, 12]);
     fs::create_dir_all(&thumbs).map_err(|e| e.to_string())?;
     thumb
