@@ -1,0 +1,118 @@
+/* Editor: stage with the image, inspector. */
+
+.editor {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: var(--size-topbar) minmax(0, 1fr);
+  background: var(--color-bg);
+}
+
+.batch-nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.batch-count {
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keeps the tooltip working on the disabled Export button. */
+.export-slot {
+  display: inline-flex;
+}
+
+.editor-main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--size-inspector);
+}
+
+/* Stage: the image is sized in JS to fit (lib/fit.ts) and centred. */
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--color-stage);
+}
+
+/* Transparency checkerboard: two flat greys in 8 px squares, only under the image. */
+.checkerboard {
+  --checker-a: #2a2a30;
+  --checker-b: #1f1f24;
+  background-color: var(--checker-b);
+  background-image: conic-gradient(
+    var(--checker-a) 25%,
+    var(--checker-b) 0 50%,
+    var(--checker-a) 0 75%,
+    var(--checker-b) 0
+  );
+  background-size: 16px 16px;
+}
+
+.checkerboard img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stage-zoom {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  padding: 2px var(--space-2);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font: var(--text-meta);
+  color: var(--color-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-error {
+  max-width: 320px;
+  text-align: center;
+  color: var(--color-text-2);
+}
+
+/* Inspector */
+
+.inspector {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--color-surface-1);
+  border-left: 1px solid var(--color-border);
+}
+
+.inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.details dt {
+  color: var(--color-text-3);
+}
+
+.details dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
