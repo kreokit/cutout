@@ -510,6 +510,11 @@
   background: var(--color-text);
   color: var(--color-bg);
 }
+.ui-segment:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ui-segment-text {
   display: flex;
   flex-direction: column;
