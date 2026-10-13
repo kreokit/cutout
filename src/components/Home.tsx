@@ -4,19 +4,19 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { FolderOpen, ImageIcon, TriangleAlert, Trash2, Upload, Zap, Sparkles } from "lucide-react";
 import { fileName } from "../lib/images";
 import { RecentEntry, listRecent, relativeTime, removeRecent } from "../lib/recent";
+import { useCutouts } from "../store/cutouts";
 import { openPaths } from "../store/session";
 import { Button, MenuEntry, Segmented, useContextMenu } from "../ui";
 import { TopBar, chooseImages } from "./TopBar";
 import "../styles/home.css";
-
-type ModelChoice = "fast" | "best";
 
 /** Home: drop or choose images, or reopen a recent one. */
 export function Home() {
   const [recent, setRecent] = useState<RecentEntry[] | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [model, setModel] = useState<ModelChoice>("fast");
+  const model = useCutouts((s) => s.model);
+  const setModel = useCutouts((s) => s.setModel);
 
   const refresh = useCallback(() => {
     listRecent().then(setRecent, () => setRecent([]));
@@ -88,13 +88,11 @@ export function Home() {
             label="Cutout quality"
             value={model}
             onChange={setModel}
-            disabled
             options={[
               { value: "fast", label: "Fast", icon: Zap, hint: "about 1 s per image" },
-              { value: "best", label: "Best", icon: Sparkles, hint: "finer hair and edges" },
+              { value: "best", label: "Best", icon: Sparkles, hint: "coming soon", disabled: true },
             ]}
           />
-          <p className="model-note">The AI cutout is coming in the next alpha. For now you can open and view images.</p>
         </section>
 
         <section className="recent" aria-labelledby="recent-title">

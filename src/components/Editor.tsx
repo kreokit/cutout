@@ -4,8 +4,10 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { Size, fitContain } from "../lib/fit";
 import { fileName, formatBytes } from "../lib/images";
+import { cutoutKey, isDownloaded, useCutouts } from "../store/cutouts";
 import { openPaths, useSession } from "../store/session";
 import { Button, IconButton, SectionLabel, Tooltip } from "../ui";
+import { CutoutSection, StageStatus } from "./CutoutStatus";
 import { TopBar } from "./TopBar";
 import "../styles/editor.css";
 
@@ -19,6 +21,15 @@ export function Editor() {
   const show = useSession((s) => s.show);
   const close = useSession((s) => s.close);
   const image = images[current];
+  const model = useCutouts((s) => s.model);
+  const ready = useCutouts((s) => isDownloaded(s.models, model));
+  const state = useCutouts((s) => (image ? s.byImage[cutoutKey(image.path, model)] : undefined));
+  const run = useCutouts((s) => s.run);
+
+  // Cut out the shown image as soon as the model is there.
+  useEffect(() => {
+    if (image && ready) void run(image.path);
+  }, [image, ready, run]);
 
   // ← / → step through a batch.
   useEffect(() => {
@@ -81,7 +92,11 @@ export function Editor() {
       </TopBar>
 
       <div className="editor-main">
-        <Stage key={image.path} src={convertFileSrc(image.path)} size={image} />
+        <Stage
+          src={convertFileSrc(state?.status === "done" ? state.result.cutout : image.path)}
+          size={image}
+          status={<StageStatus state={state} onRetry={() => void run(image.path, { retry: true })} />}
+        />
         <aside className="inspector" aria-label="Inspector">
           <section className="inspector-section">
             <SectionLabel>Image</SectionLabel>
@@ -96,6 +111,7 @@ export function Editor() {
               <dd>{formatBytes(image.bytes)}</dd>
             </dl>
           </section>
+          <CutoutSection state={state} />
         </aside>
       </div>
     </div>
@@ -103,10 +119,11 @@ export function Editor() {
 }
 
 /** The image fitted (never enlarged) to the free space, on a transparency checkerboard. */
-function Stage({ src, size }: { src: string; size: Size }) {
+function Stage({ src, size, status }: { src: string; size: Size; status: React.ReactNode }) {
   const stage = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Size>({ width: 0, height: 0 });
   const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
 
   useLayoutEffect(() => {
     const el = stage.current;
@@ -129,6 +146,7 @@ function Stage({ src, size }: { src: string; size: Size }) {
         </div>
       )}
       {fit.scale > 0 && <span className="stage-zoom">{Math.round(fit.scale * 100)}%</span>}
+      {status}
     </div>
   );
 }

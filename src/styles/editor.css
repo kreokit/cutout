@@ -116,3 +116,73 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* Cutout status on the stage */
+
+.stage-status {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font: var(--text-meta);
+  color: var(--color-text-2);
+}
+
+.stage-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.stage-card-title {
+  font: var(--text-title);
+}
+
+.stage-card-text {
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+}
+
+.stage-card-warning {
+  color: var(--color-warning);
+}
+
+.stage-card-progress {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.stage-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: var(--text-meta);
+  color: var(--color-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-card-error {
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}

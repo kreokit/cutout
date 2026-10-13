@@ -4,11 +4,16 @@ import { CpuCheck } from "./components/CpuCheck";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
 import { chooseImages } from "./components/TopBar";
+import { useCutouts } from "./store/cutouts";
 import { openPaths, useSession } from "./store/session";
 import { ToastRegion } from "./ui";
 
 function App() {
   const hasImages = useSession((s) => s.images.length > 0);
+
+  useEffect(() => {
+    void useCutouts.getState().refreshModels();
+  }, []);
 
   // ⌘O / Ctrl+O opens images from any screen.
   useEffect(() => {
