@@ -135,19 +135,34 @@
   cursor: default;
 }
 
+/* A square. The explicit width matters: macOS 12's WebKit doesn't size an aspect-ratio
+   box from a stretched flex width when its only children are absolutely placed. */
 .recent-thumb {
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: block;
+  width: 100%;
   aspect-ratio: 1;
+  overflow: hidden;
   background: var(--color-stage);
   color: var(--color-text-3);
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Absolutely placed, so a tall or wide thumbnail can't stretch the square. */
 .recent-thumb img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* The placeholder icon when there's no thumbnail. */
+.recent-thumb svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .recent-card.missing .recent-thumb img {
