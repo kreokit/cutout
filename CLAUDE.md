@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-14):** Milestones 1–3 are done and user-tested. Next: Milestone 4 (Backgrounds + export).
+**Status (2026-10-15):** Milestones 1–3 are done and user-tested. Milestone 4 (Backgrounds + export) is built and waiting for the user's test.
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -52,7 +52,7 @@ Copy the files into this repo for now. A shared package can come later, once the
   - **Excluded:** IS-Net / `isnet-general-use` (DIS repo licenses only "code and evaluation metric" as Apache-2.0; weights unclear; the `onnx-community/ISNet-ONNX` copy is AGPL-3.0), RMBG 1.4/2.0 (non-commercial), BEN2 full (commercial)
   - **Mirror:** the app downloads only from our own GitHub release `models-v1` on `kreokit/cutout`, pinned by SHA-256. Each model file is uploaded there with its licence file and a source/attribution note. The original source URLs stay documented in `THIRD-PARTY-LICENSES.md`
   - Start with Fast (U²-Net) in M2; add Best in M5.
-- **Image I/O:** the `image` crate (PNG, JPG, WebP, HEIC if feasible later)
+- **Image I/O:** the `image` crate (PNG, JPG, WebP, HEIC if feasible later). Lossy WebP export uses **libwebp 1.6.0** (BSD-3-Clause) via `libwebp-sys` 0.14, built from source; **not** the `webp` crate (it pulls libwebp 1.3.1, CVE-2023-4863). libwebp's COPYING and PATENTS ship in `licenses/`
 - **No FFmpeg** in v0.1 (images only). Video cutout is a later milestone.
 - **State:** Zustand. Projects are not needed in v0.1; recent files list only.
 
@@ -73,6 +73,17 @@ Copy the files into this repo for now. A shared package can come later, once the
 - **Zoom/pan** (`src/lib/view.ts`, Figma style): scroll pans; ⌘/Ctrl + scroll and pinch zoom; Space + drag and middle-drag pan; zoom bar, ⌘0 / ⌘1 / ⌘+ / ⌘−. Pixels are sharp from 200%.
 - **Tools:** H / E / R, brush size in screen pixels (`[` `]`), softness (Shift + `[` `]`).
 
+## Backgrounds + export (milestone 4)
+
+- **Backgrounds** (`background.rs`): transparent, solid colour, blur of the original, or an image (cover-fitted). **One background for all open images**, with undo: every step in `src/store/edits.ts` has a global number, so ⌘Z undoes the newest step of the current image *or* of the background.
+- **Blur without halo:** normalized convolution over the background only, blur(original × background weight) / blur(weight); the weight is made strict (cells < 90 % background count as 0) and eroded by one cell, so subject colours never bleed in. Wider levels fill in behind the subject (it can show there after Fill). Computed on a small grid (cells ≈ σ/4) and sampled up, so preview and export of any size look the same; strength 5–100 = σ up to 6 % of the short side. 48 MP: 0.6 s (2.1 s at strength 5)
+- **Sizes** (`layout.rs`): original, 1080×1080, 1080×1350, 1080×1920, 1280×720. **Fit**: the whole photo inside the frame. **Fill**: covers the frame centred on the subject (final-mask bounds ≥ 32), zooming out just enough that it is never cut off (4 % margin); a subject touching the photo's edge stays on that frame edge
+- **Export** (`export.rs`, `session.rs`): every refine edit at **full size** (the working copy's render is reused when it is full size), the cutout scaled premultiplied (no dark fringe), straight-alpha "over" the background, fully transparent pixels cleared (nothing erased stays hidden in the file), written atomically (temp file + rename). Over 16 MP, the last full-size render is kept per edits, so exporting again is quick (48 MP: first export ≈ 8 s, then 1–2 s; WebP encode ≈ 7 s). PNG keeps alpha (RGB when opaque); WebP is lossy with lossless alpha (max 16383 px a side); JPG goes on white when transparent. The original's ICC profile is embedded (ICCP chunk for WebP); EXIF is not copied
+- **Stage:** a colour is CSS; blur (from the 1 MP copy) and image (≤ 4 MP) come from `stage_background`, under the cutout canvas. The Export dialog's preview (`export_preview`, ≤ 0.4 MP) uses the same `export::render`
+- **Export dialog** (⌘E): format, quality 40–100 (WebP/JPG), size, Fit/Fill, preview; settings remembered in localStorage (`store/exportSettings.ts`, sanitized on load); save dialog defaults to `<name>-cutout.<ext>` next to the original; "Show in folder" after saving
+- **Open: macOS 12 binary check.** A local release build fails `check_macos_binary.py` with a weak import of `_dispatch_once_f` (libSystem). It is not from libwebp: the build from before libwebp (2d51254) fails the same way, and no crate, C archive, Rust std or ONNX Runtime archive references the symbol, so the linker adds it. The function exists since macOS 10.6. The release workflow (which runs the check on CI's SDK) has never run for Cutout; decide in M6 (check on CI, then on the macOS 12 Mac) before allow-listing anything
+- **UI kit:** `ColorPicker` has a saturation/brightness area and hue bar (the only gradients in the kit: they are the colour space), custom `swatches` and `onCommit`. Editor shortcuts ignore keys from inside dialogs and popovers
+
 ## Screens (v0.1)
 
 1. **Home:** big drop zone (one or many images), recent files, model picker (Fast / Best)
@@ -88,7 +99,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 1. ✅ **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
 2. ✅ **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
 3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
-4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
+4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets (built 2026-10-15, waiting for the user's test)
 5. **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
 6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha
 
@@ -100,7 +111,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 - `fixtures/photos/`: 7 photos (CC0 / public domain from Wikimedia Commons, plus our logo) with sources in `SOURCES.md`
 - `fixtures/`: 5–8 images that are our own or free-licensed (Pexels/Pixabay/Unsplash license noted per file), covering a person with hair, a product on a table, a pet, a logo/flat graphic, and a low-contrast background. Each has a **hand-made reference mask**.
 - Mask quality per model: IoU and mean absolute error vs the reference, logged per image, with a minimum threshold enforced once the baseline is known.
-- Export round-trip: the exported PNG keeps the alpha channel; the JPG export has the chosen background, no alpha.
+- Export round-trip (`session.rs` tests): the exported PNG keeps the alpha channel and equals the refine functions run at full size, also when the working copy is smaller; the JPG export has the chosen background, no alpha; preset sizes are exact; blur and image backgrounds; the ICC profile is kept. `export_timings` and `background_timings` (ignored) time 12 and 48 MP.
 - Batch: N inputs → N outputs, names preserved, nothing overwritten without confirmation.
 - Performance: log seconds per image per model on the dev machine.
 

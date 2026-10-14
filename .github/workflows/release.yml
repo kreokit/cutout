@@ -153,7 +153,8 @@ jobs:
             res="$out"
           fi
           for f in "$res/THIRD-PARTY-LICENSES.md" "$res/licenses/ONNXRUNTIME-LICENSE.txt" \
-                   "$res/licenses/ONNXRUNTIME-ThirdPartyNotices.txt"; do
+                   "$res/licenses/ONNXRUNTIME-ThirdPartyNotices.txt" \
+                   "$res/licenses/LIBWEBP-COPYING.txt" "$res/licenses/LIBWEBP-PATENTS.txt"; do
             [[ -f "$f" ]] && echo "ok  $f" || { echo "missing $f"; exit 1; }
           done
 

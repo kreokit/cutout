@@ -87,3 +87,32 @@ wider the soft edge, the more tiles.
 
 In `tauri dev`, the app's own code is now compiled with `opt-level = 1`: a full render of
 a 1.7 MP photo took 2.88 s unoptimised and 0.30 s with it.
+
+## 2026-10-15: Backgrounds + export (milestone 4)
+
+Same dev Mac. `cargo test --release background_timings -- --ignored` and
+`export_timings`, synthetic scenes, edits: feather 3, shift +2, two brush strokes,
+"Remove dark fringe" on.
+
+**Blur background** (normalized convolution on a small grid, then sampled up):
+
+| Case | Seconds |
+|---|---|
+| 48 MP, strength 5 (largest grid, 2 M cells) | 2.11 |
+| 48 MP, strength 40 / 100 | 0.62 / 0.60 |
+| 48 MP photo to a 1080×1920 frame, strength 40 | 0.18 |
+
+**Export** (seconds, file size). The 12 MP image fits the working copy, so its cached
+render is reused. The 48 MP image is over 16 MP: the first export refines it at full size,
+and later exports with the same edits reuse that render.
+
+| Export | 12 MP (4032×3024) | 48 MP (8064×6048) |
+|---|---|---|
+| PNG, original, transparent (first export) | 0.23 | 7.99 (7.0 refine) |
+| JPG, original, colour | 0.40 | 1.73 |
+| WebP, original, transparent | 1.61 | 7.20 (6.9 encode) |
+| JPG 1080×1350 Fill, blur | 0.30 | 0.78 |
+| PNG, original, blur | 0.54 | 1.80 |
+
+libwebp's default effort (method 4) makes WebP the slowest encoder at large sizes; the
+dialog shows progress while it runs.
