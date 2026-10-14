@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  hexToHsv,
+  hsvToHex,
   nextIndex,
   normalizeHex,
   parseNumberField,
@@ -96,5 +98,23 @@ describe("parseNumberField", () => {
     expect(parseNumberField("140", 0, 100)).toBe(100);
     expect(parseNumberField("-3", 0, 100)).toBe(0);
     expect(parseNumberField("abc", 0, 100)).toBeNull();
+  });
+});
+
+describe("HSV colours", () => {
+  it("converts known colours", () => {
+    expect(hexToHsv("#FF0000")).toEqual({ h: 0, s: 1, v: 1 });
+    expect(hexToHsv("#000000")).toEqual({ h: 0, s: 0, v: 0 });
+    expect(hexToHsv("#FFFFFF")).toEqual({ h: 0, s: 0, v: 1 });
+    const lime = hexToHsv("#C8F135");
+    expect(lime.h).toBeCloseTo(73.1, 1);
+    expect(hsvToHex({ h: 120, s: 1, v: 1 })).toBe("#00FF00");
+    expect(hsvToHex({ h: 240, s: 0.5, v: 0.5 })).toBe("#404080");
+  });
+
+  it("round-trips every swatch-like colour", () => {
+    for (const hex of ["#C8F135", "#0E0E10", "#3D8BFF", "#FF5FD2", "#A1A1AA", "#123456", "#FEDCBA"]) {
+      expect(hsvToHex(hexToHsv(hex))).toBe(hex);
+    }
   });
 });
