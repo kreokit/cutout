@@ -16,6 +16,7 @@ export function Slider({
   label,
   format = String,
   disabled,
+  origin,
 }: {
   value: number;
   min: number;
@@ -26,11 +27,15 @@ export function Slider({
   label: string;
   format?: (value: number) => string;
   disabled?: boolean;
+  /** Where the fill starts, e.g. 0 for a −/+ slider (default: `min`). */
+  origin?: number;
 }) {
   const track = useRef<HTMLDivElement>(null);
   /** The value at the start of a drag, and the latest value during it. */
   const drag = useRef<{ start: number; latest: number } | null>(null);
-  const ratio = max > min ? (clamp(value, min, max) - min) / (max - min) : 0;
+  const toRatio = (v: number) => (max > min ? (clamp(v, min, max) - min) / (max - min) : 0);
+  const ratio = toRatio(value);
+  const from = toRatio(origin ?? min);
 
   const fromPointer = (clientX: number) => {
     const r = track.current?.getBoundingClientRect();
@@ -79,7 +84,10 @@ export function Slider({
       }}
     >
       <div className="ui-slider-track">
-        <div className="ui-slider-fill" style={{ width: `${ratio * 100}%` }} />
+        <div
+          className="ui-slider-fill"
+          style={{ marginLeft: `${Math.min(from, ratio) * 100}%`, width: `${Math.abs(ratio - from) * 100}%` }}
+        />
       </div>
       <div className="ui-slider-thumb" style={{ left: `${ratio * 100}%` }} />
     </div>
