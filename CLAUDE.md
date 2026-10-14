@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-14):** Milestones 1–2 are done and user-tested (cutout with the Fast model). Next: Milestone 3 (Refine). User test notes for M3: a white chair at the edge stayed foreground (erase brush), edges slightly soft with a dark fringe around hair and shoulders (shift / decontamination).
+**Status (2026-10-14):** Milestones 1–2 are done and user-tested. Milestone 3 (Refine) is built and waiting for the user's test in the app.
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -62,6 +62,15 @@ Copy the files into this repo for now. A shared package can come later, once the
 3. Upscale the mask to the original size; optional edge refinement (guided filter or similar) for hair and fur.
 4. Composite: original RGB + mask → RGBA.
 5. Apply the chosen background, then export.
+
+## Refine (milestone 3)
+
+- **Order** (`src-tauri/src/refine.rs`): AI mask → **shift** (grayscale erode/dilate, square window, ±10 px) → **feather** (Gaussian, σ = feather / 2, up to 20 px) → **brush strokes** in order (restore blends towards opaque, erase towards transparent; no build-up within one stroke) → colours: **Remove dark fringe** (blur-fusion foreground estimation, Forte & Pitié 2021; on by default) for semi-transparent pixels. Lengths are in pixels of the original image.
+- **Rust is the only implementation** of the mask maths; preview and (M4) export use the same functions. `session.rs` caches per image (original, edge mask, final mask, output) and renders only what changed; renders go to the webview as raw RGBA after a 24-byte header. Working copy ≤ 16 MP (WebKit's canvas limit); export is full size.
+- **Frontend:** `CutoutCanvas` shows renders ("latest wins" queue; slider drags send 1 MP previews, the full render follows on release). The brush paints live into the canvas with the same maths (`src/lib/brush.ts`, `paint.ts`; parity via `fixtures/brush-cases.json`), then the backend renders the stroke's bounds. Restore reads the working original from the backend (`working_original`), never from a cross-origin image.
+- **Undo/redo** (`src/store/edits.ts`): strokes and edge changes, one step per slider drag (`Slider` `onCommit`); ⌘Z, ⇧⌘Z, Ctrl+Y. Edits are kept for the session only.
+- **Zoom/pan** (`src/lib/view.ts`, Figma style): scroll pans; ⌘/Ctrl + scroll and pinch zoom; Space + drag and middle-drag pan; zoom bar, ⌘0 / ⌘1 / ⌘+ / ⌘−. Pixels are sharp from 200%.
+- **Tools:** H / E / R, brush size in screen pixels (`[` `]`), softness (Shift + `[` `]`).
 
 ## Screens (v0.1)
 

@@ -64,3 +64,26 @@ Each case was checked by eye.
 | small-subject-snow-dog.jpg | **0.283** | 0.0225 | the dog's dark body is faint, only the head is solid |
 
 These are the cases for the refine brush (milestone 3) and the Best model (milestone 5).
+
+## 2026-10-14: Refine (milestone 3)
+
+`cargo test --release refine_timings -- --ignored` on a synthetic 12 MP image (4032×3024)
+with a soft-edged mask. "Remove dark fringe" is on unless noted.
+
+| Edit | Seconds | Sent to the webview |
+|---|---|---|
+| First render (decode, edge mask, fringe removal) | 0.53 | 48 MB (whole image) |
+| Brush stroke (only its bounds) | 0.05 | < 1 MB |
+| Slider preview, first frame (makes the 1 MP copy) | 0.32 | 3 MB |
+| Slider preview, next frames | 0.10 | 3 MB |
+| Feather 6 px (full) | 0.98 | 48 MB |
+| Shift −3 px with feather 7 (full) | 1.64 | 48 MB |
+| Same without fringe removal | 0.06 | 48 MB |
+
+Fringe removal (blur-fusion foreground estimation) is the expensive part. It runs only on
+256 px tiles that contain semi-transparent pixels, each with an exact 50 px margin, in
+parallel on all cores. That brought a full 12 MP render from 4.0 s to 0.5–1.6 s; the
+wider the soft edge, the more tiles.
+
+In `tauri dev`, the app's own code is now compiled with `opt-level = 1`: a full render of
+a 1.7 MP photo took 2.88 s unoptimised and 0.30 s with it.
