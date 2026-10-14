@@ -97,6 +97,11 @@ pub fn cache_key(image: &Path) -> Result<String, String> {
 
 /// Decodes the whole image at `path`, turned upright by its EXIF orientation.
 pub fn decode(path: &Path) -> Result<image::DynamicImage, String> {
+    Ok(decode_with_profile(path)?.0)
+}
+
+/// Like [`decode`], also returning the image's ICC colour profile, if it has one.
+pub fn decode_with_profile(path: &Path) -> Result<(image::DynamicImage, Option<Vec<u8>>), String> {
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -106,10 +111,11 @@ pub fn decode(path: &Path) -> Result<image::DynamicImage, String> {
         .into_decoder()
         .map_err(|e| format!("cannot read {name}: {e}"))?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let profile = decoder.icc_profile().ok().flatten();
     let mut img = image::DynamicImage::from_decoder(decoder)
         .map_err(|e| format!("cannot read {name}: {e}"))?;
     img.apply_orientation(orientation);
-    Ok(img)
+    Ok((img, profile))
 }
 
 /// The cached thumbnail for `image` (a JPEG, longest side 480 px, EXIF orientation

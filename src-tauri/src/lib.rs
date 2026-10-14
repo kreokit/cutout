@@ -1,12 +1,9 @@
-// Used by the export (next commits).
-#[cfg_attr(not(test), allow(dead_code))]
 mod background;
 mod cpu;
 mod cutout;
-#[cfg_attr(not(test), allow(dead_code))]
 mod encode;
+mod export;
 mod images;
-#[cfg_attr(not(test), allow(dead_code))]
 mod layout;
 mod models;
 mod recent;
@@ -203,6 +200,95 @@ async fn working_original(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map_err(|e| format!("cannot find the cache folder: {e}"))
+}
+
+/// Exports `path` (cut out with `model`) with `edits` on `background` to `dest`, at full
+/// size. Returns the path written (with the format's extension added if it had none).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_image(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    path: String,
+    model: CutoutModel,
+    edits: session::Edits,
+    background: background::Background,
+    settings: export::ExportSettings,
+    dest: String,
+) -> Result<String, String> {
+    let cache = cache_dir(&app)?;
+    let refiner = refiner.inner().clone();
+    blocking(move || {
+        let image = Path::new(&path);
+        let (_, mask) = cutout::result_paths(&cache, image, model)?;
+        let dest = export::destination(Path::new(&dest), settings.format)?;
+        let bytes = refiner.export(image, &mask, &edits, &background, &settings)?;
+        export::write_atomic(&dest, &bytes)?;
+        Ok(dest.to_string_lossy().into_owned())
+    })
+    .await
+}
+
+/// A small preview of the export (raw RGBA after the render header).
+#[tauri::command]
+async fn export_preview(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    path: String,
+    model: CutoutModel,
+    edits: session::Edits,
+    background: background::Background,
+    settings: export::ExportSettings,
+) -> Result<tauri::ipc::Response, String> {
+    let cache = cache_dir(&app)?;
+    let refiner = refiner.inner().clone();
+    let bytes = blocking(move || {
+        let image = Path::new(&path);
+        let (_, mask) = cutout::result_paths(&cache, image, model)?;
+        refiner.export_preview(image, &mask, &edits, &background, &settings)
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// The background layer under the cutout on the stage (raw RGBA after the render header).
+#[tauri::command]
+async fn stage_background(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    path: String,
+    model: CutoutModel,
+    edits: session::Edits,
+    background: background::Background,
+) -> Result<tauri::ipc::Response, String> {
+    let cache = cache_dir(&app)?;
+    let refiner = refiner.inner().clone();
+    let bytes = blocking(move || {
+        let image = Path::new(&path);
+        let (_, mask) = cutout::result_paths(&cache, image, model)?;
+        refiner.stage_background(image, &mask, &edits, &background)
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Shows an exported file in the file manager. Only files with an image extension.
+#[tauri::command]
+fn reveal_export(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = PathBuf::from(path);
+    if !images::has_image_extension(&path) || !path.is_file() {
+        return Err("not an exported image".into());
+    }
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
 /// Frees the refine session (when leaving the editor).
 #[tauri::command]
 fn close_refine(refiner: State<'_, Arc<session::Refiner>>) {
@@ -303,6 +389,10 @@ pub fn run() {
             render_refined,
             working_original,
             close_refine,
+            export_image,
+            export_preview,
+            stage_background,
+            reveal_export,
             cancel,
             list_recent,
             remove_recent,

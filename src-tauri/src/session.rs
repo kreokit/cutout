@@ -9,13 +9,16 @@
 //! u32: working width, working height, x, y, width, height of the pixels that follow).
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime};
 
 use image::imageops::{self, FilterType};
 use image::{GrayImage, RgbaImage};
 use serde::Deserialize;
 
+use crate::background::{self, Background};
+use crate::encode;
+use crate::export::{self, ExportSettings, Sources};
 use crate::images;
 use crate::refine::{self, DECONTAMINATE_REACH, EdgeSettings, Rect, Stroke};
 
@@ -23,6 +26,10 @@ use crate::refine::{self, DECONTAMINATE_REACH, EdgeSettings, Rect, Stroke};
 pub const MAX_WORKING_PIXELS: u64 = 16_000_000;
 /// Slider previews are rendered at most this big.
 pub const PREVIEW_PIXELS: u64 = 1_000_000;
+/// The Export dialog's preview is at most this big.
+pub const EXPORT_PREVIEW_PIXELS: u64 = 400_000;
+/// An image background is sent to the stage at most this big.
+pub const STAGE_BACKGROUND_PIXELS: u64 = 4_000_000;
 
 /// Everything the user changed on one image.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -82,6 +89,29 @@ impl Layer {
 
     fn size(&self) -> (u32, u32) {
         self.image.dimensions()
+    }
+
+    /// The cached output and final mask, if they are for `edits`.
+    fn cached(&self, edits: &Edits) -> Option<(&RgbaImage, &GrayImage)> {
+        let edges = edits.edges.scaled(self.scale);
+        let strokes: Vec<Stroke> = edits.strokes.iter().map(|s| s.scaled(self.scale)).collect();
+        let (out_edges, out_strokes, out) = self.out.as_ref()?;
+        let (mask_key, mask_strokes, mask) = self.mask.as_ref()?;
+        (*out_edges == edges
+            && *out_strokes == strokes
+            && *mask_key == (edges.feather, edges.shift)
+            && *mask_strokes == strokes)
+            .then_some((out, mask))
+    }
+
+    /// This layer's image with its output and final mask for `edits` (rendering them if
+    /// needed).
+    fn results(&mut self, edits: &Edits) -> (&RgbaImage, &RgbaImage, &GrayImage) {
+        if self.cached(edits).is_none() {
+            self.render(edits, true);
+        }
+        let (out, mask) = self.cached(edits).expect("just rendered");
+        (&self.image, out, mask)
     }
 
     /// Renders `edits` and returns the rectangle that changed since the last render
@@ -179,14 +209,38 @@ impl Layer {
 struct Session {
     key: (PathBuf, PathBuf),
     image: RgbaImage,
+    /// The original's ICC colour profile, kept in exports.
+    profile: Option<Vec<u8>>,
     base: GrayImage,
     working: Layer,
     preview: Option<Layer>,
 }
 
-/// The refine session of the image being edited (one at a time).
-#[derive(Default)]
-pub struct Refiner(Mutex<Option<Session>>);
+impl Session {
+    fn preview(&mut self) -> &mut Layer {
+        let (image, base) = (&self.image, &self.base);
+        self.preview
+            .get_or_insert_with(|| Layer::new(image, base, PREVIEW_PIXELS))
+    }
+}
+
+/// A decoded image background: its path, modification time and pixels.
+type CustomImage = (PathBuf, Option<SystemTime>, Arc<RgbaImage>);
+
+/// The refine session of the image being edited (one at a time), and the decoded image
+/// of an image background.
+pub struct Refiner {
+    session: Mutex<Option<Session>>,
+    custom: Mutex<Option<CustomImage>>,
+    /// The largest working copy ([`MAX_WORKING_PIXELS`]; smaller in tests).
+    working_limit: u64,
+}
+
+impl Default for Refiner {
+    fn default() -> Refiner {
+        Refiner::with_working_limit(MAX_WORKING_PIXELS)
+    }
+}
 
 fn header(layer_size: (u32, u32), region: Rect, pixels: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(24 + pixels.len());
@@ -205,23 +259,30 @@ fn header(layer_size: (u32, u32), region: Rect, pixels: Vec<u8>) -> Vec<u8> {
 }
 
 /// Makes `slot` hold the session for `image_path` and `mask_path`, loading it if needed.
-fn load(slot: &mut Option<Session>, image_path: &Path, mask_path: &Path) -> Result<(), String> {
+fn load(
+    slot: &mut Option<Session>,
+    image_path: &Path,
+    mask_path: &Path,
+    working_limit: u64,
+) -> Result<(), String> {
     let key = (image_path.to_path_buf(), mask_path.to_path_buf());
     if slot.as_ref().is_some_and(|s| s.key == key) {
         return Ok(());
     }
     *slot = None; // free the previous image first
-    let image = images::decode(image_path)?.to_rgba8();
+    let (image, profile) = images::decode_with_profile(image_path)?;
+    let image = image.to_rgba8();
     let mut base = image::open(mask_path)
         .map_err(|e| format!("cannot read the cutout mask: {e}"))?
         .to_luma8();
     if base.dimensions() != image.dimensions() {
         base = imageops::resize(&base, image.width(), image.height(), FilterType::Triangle);
     }
-    let working = Layer::new(&image, &base, MAX_WORKING_PIXELS);
+    let working = Layer::new(&image, &base, working_limit);
     *slot = Some(Session {
         key,
         image,
+        profile,
         base,
         working,
         preview: None,
@@ -230,11 +291,182 @@ fn load(slot: &mut Option<Session>, image_path: &Path, mask_path: &Path) -> Resu
 }
 
 impl Refiner {
+    pub fn with_working_limit(working_limit: u64) -> Refiner {
+        Refiner {
+            session: Mutex::new(None),
+            custom: Mutex::new(None),
+            working_limit,
+        }
+    }
+
+    /// The session for `image_path` and `mask_path`, loaded if needed.
+    fn session(
+        &self,
+        image_path: &Path,
+        mask_path: &Path,
+    ) -> Result<std::sync::MutexGuard<'_, Option<Session>>, String> {
+        let mut slot = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        load(&mut slot, image_path, mask_path, self.working_limit)?;
+        Ok(slot)
+    }
+
+    /// The decoded picture of an image background (cached while the file is unchanged).
+    fn custom_image(&self, background: &Background) -> Result<Option<Arc<RgbaImage>>, String> {
+        let Background::Image { path } = background else {
+            return Ok(None);
+        };
+        let path = PathBuf::from(path);
+        let modified = std::fs::metadata(&path)
+            .map_err(|e| format!("cannot open the background image: {e}"))?
+            .modified()
+            .ok();
+        let mut slot = self.custom.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((p, m, img)) = slot.as_ref()
+            && *p == path
+            && *m == modified
+        {
+            return Ok(Some(img.clone()));
+        }
+        *slot = None;
+        let img = Arc::new(images::decode(&path)?.to_rgba8());
+        *slot = Some((path, modified, img.clone()));
+        Ok(Some(img))
+    }
+
+    /// The exported file's bytes: `edits` applied to the full-size original, on
+    /// `background`, as `settings` say.
+    pub fn export(
+        &self,
+        image_path: &Path,
+        mask_path: &Path,
+        edits: &Edits,
+        background: &Background,
+        settings: &ExportSettings,
+    ) -> Result<Vec<u8>, String> {
+        let custom = self.custom_image(background)?;
+        let mut slot = self.session(image_path, mask_path)?;
+        let Session {
+            image,
+            profile,
+            base,
+            working,
+            ..
+        } = slot.as_mut().unwrap();
+        let start = Instant::now();
+        // The working copy's results when it is the full size and up to date.
+        let fresh;
+        let (cutout, mask) = match working.cached(edits) {
+            Some(results) if working.scale == 1.0 => results,
+            _ => {
+                let mask =
+                    refine::final_mask(&refine::edge_mask(base, &edits.edges), &edits.strokes);
+                let cutout = refine::compose(image, &mask, edits.edges.decontaminate);
+                fresh = (cutout, mask);
+                (&fresh.0, &fresh.1)
+            }
+        };
+        let refined = start.elapsed().as_secs_f32();
+        let sources = Sources {
+            original: image,
+            cutout,
+            mask,
+            scale: 1.0,
+            full: image.dimensions(),
+        };
+        let picture = export::render(&sources, background, custom.as_deref(), settings, 1.0)?;
+        let rendered = start.elapsed().as_secs_f32();
+        let bytes = encode::encode(
+            &picture,
+            settings.format,
+            settings.quality,
+            profile.as_deref(),
+        )?;
+        eprintln!(
+            "[export] {}×{} {:?}: refine {refined:.2}s, compose {:.2}s, encode {:.2}s",
+            picture.width(),
+            picture.height(),
+            settings.format,
+            rendered - refined,
+            start.elapsed().as_secs_f32() - rendered
+        );
+        Ok(bytes)
+    }
+
+    /// A small preview of the export (same header as a render), made from the 1 MP copy.
+    pub fn export_preview(
+        &self,
+        image_path: &Path,
+        mask_path: &Path,
+        edits: &Edits,
+        background: &Background,
+        settings: &ExportSettings,
+    ) -> Result<Vec<u8>, String> {
+        let custom = self.custom_image(background)?;
+        let mut slot = self.session(image_path, mask_path)?;
+        let session = slot.as_mut().unwrap();
+        let full = session.image.dimensions();
+        let (fw, fh) = export::output_size(full, settings)?;
+        let factor = ((EXPORT_PREVIEW_PIXELS as f64 / (fw as f64 * fh as f64)).sqrt()).min(1.0);
+        let layer = session.preview();
+        let scale = layer.scale;
+        let (original, cutout, mask) = layer.results(edits);
+        let sources = Sources {
+            original,
+            cutout,
+            mask,
+            scale,
+            full,
+        };
+        let picture = export::render(
+            &sources,
+            background,
+            custom.as_deref(),
+            settings,
+            factor as f32,
+        )?;
+        let size = picture.dimensions();
+        Ok(header(size, Rect::full(size.0, size.1), picture.into_raw()))
+    }
+
+    /// The background layer under the cutout on the stage (same header as a render), the
+    /// shape of the image: the blur from the 1 MP copy, an image at up to 4 MP.
+    pub fn stage_background(
+        &self,
+        image_path: &Path,
+        mask_path: &Path,
+        edits: &Edits,
+        background: &Background,
+    ) -> Result<Vec<u8>, String> {
+        let custom = self.custom_image(background)?;
+        let mut slot = self.session(image_path, mask_path)?;
+        let session = slot.as_mut().unwrap();
+        let (w, h) = session.image.dimensions();
+        let picture = match background {
+            Background::Transparent => RgbaImage::new(1, 1),
+            Background::Color { color } => background::solid(*color, 1, 1),
+            Background::Blur { strength } => {
+                let layer = session.preview();
+                let (lw, lh) = layer.size();
+                let (original, _, mask) = layer.results(edits);
+                background::blurred(original, mask, *strength, lw, lh)
+            }
+            Background::Image { .. } => {
+                let (bw, bh) = scaled_size(w, h, STAGE_BACKGROUND_PIXELS);
+                background::cover(
+                    custom.as_deref().ok_or("the background image is missing")?,
+                    bw,
+                    bh,
+                )
+            }
+        };
+        let size = picture.dimensions();
+        Ok(header(size, Rect::full(size.0, size.1), picture.into_raw()))
+    }
+
     /// The original image at the working size (fully opaque where the photo is), with
     /// the same header as a render: the brush's live preview restores from it.
     pub fn original(&self, image_path: &Path, mask_path: &Path) -> Result<Vec<u8>, String> {
-        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        load(&mut slot, image_path, mask_path)?;
+        let slot = self.session(image_path, mask_path)?;
         let image = &slot.as_ref().unwrap().working.image;
         let size = image.dimensions();
         Ok(header(
@@ -256,8 +488,7 @@ impl Refiner {
         preview: bool,
         full: bool,
     ) -> Result<Vec<u8>, String> {
-        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        load(&mut slot, image_path, mask_path)?;
+        let mut slot = self.session(image_path, mask_path)?;
         let Session {
             image,
             base,
@@ -291,7 +522,8 @@ impl Refiner {
 
     /// Forgets the session (e.g. when going back to Home), freeing its memory.
     pub fn clear(&self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.custom.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -429,6 +661,273 @@ mod tests {
         // Then the working copy is still full size.
         let (h, _) = parse(&refiner.render(&ip, &mp, &edits, false, false).unwrap());
         assert_eq!(h[..2], [1600, 1200]);
+    }
+
+    use crate::encode::Format;
+    use crate::layout::{Fit, Size};
+
+    fn settings(format: Format, size: Option<(u32, u32)>, fit: Fit) -> ExportSettings {
+        ExportSettings {
+            format,
+            quality: 95,
+            size: size.map(|(width, height)| Size { width, height }),
+            fit,
+        }
+    }
+
+    fn some_edits() -> Edits {
+        Edits {
+            edges: EdgeSettings {
+                feather: 3.0,
+                shift: 2.0,
+                decontaminate: true,
+            },
+            strokes: vec![
+                stroke(BrushMode::Erase, vec![[100.0, 80.0], [130.0, 95.0]]),
+                stroke(BrushMode::Restore, vec![[20.0, 20.0], [40.0, 30.0]]),
+            ],
+        }
+    }
+
+    fn near(a: [u8; 3], b: [u8; 3], tolerance: i32) -> bool {
+        (0..3).all(|i| (a[i] as i32 - b[i] as i32).abs() <= tolerance)
+    }
+
+    const BLUE: [u8; 3] = [0x3D, 0x8B, 0xFF];
+
+    /// The expected export: fully transparent pixels carry no colour (nothing of the
+    /// erased photo is hidden in the file).
+    fn expected_export(ip: &Path, mp: &Path, edits: &Edits) -> RgbaImage {
+        let mut want = expected(ip, mp, edits);
+        for p in want.pixels_mut().filter(|p| p.0[3] == 0) {
+            p.0 = [0; 4];
+        }
+        want
+    }
+
+    #[test]
+    fn png_export_keeps_alpha_and_every_edit_at_full_size() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-png");
+        let (ip, mp) = scene(&dir, 240, 180);
+        let edits = some_edits();
+        let want = expected_export(&ip, &mp, &edits);
+        assert!(want.pixels().any(|p| p.0[3] == 0) && want.pixels().any(|p| p.0[3] == 255));
+        let png = settings(Format::Png, None, Fit::Fit);
+
+        // A working copy smaller than the image: the export is still made at full size.
+        let small = Refiner::with_working_limit(10_000);
+        let (h, _) = parse(&small.render(&ip, &mp, &edits, false, false).unwrap());
+        assert!(h[0] < 240, "working copy {}×{}", h[0], h[1]);
+        let bytes = small
+            .export(&ip, &mp, &edits, &Background::Transparent, &png)
+            .unwrap();
+        let out = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(out.color(), image::ColorType::Rgba8);
+        assert_eq!(out.to_rgba8(), want);
+
+        // A full-size working copy: its cached render is reused, with the same result.
+        let full = Refiner::default();
+        full.render(&ip, &mp, &edits, false, false).unwrap();
+        let bytes = full
+            .export(&ip, &mp, &edits, &Background::Transparent, &png)
+            .unwrap();
+        assert_eq!(image::load_from_memory(&bytes).unwrap().to_rgba8(), want);
+        // And with edits it hasn't rendered yet.
+        let mut later = edits.clone();
+        later.strokes.pop();
+        let bytes = full
+            .export(&ip, &mp, &later, &Background::Transparent, &png)
+            .unwrap();
+        assert_eq!(
+            image::load_from_memory(&bytes).unwrap().to_rgba8(),
+            expected_export(&ip, &mp, &later)
+        );
+    }
+
+    #[test]
+    fn jpg_export_has_the_chosen_background_and_no_alpha() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-jpg");
+        let (ip, mp) = scene(&dir, 240, 180);
+        let refiner = Refiner::default();
+        let edits = Edits {
+            edges: EdgeSettings::default(),
+            strokes: vec![],
+        };
+        let jpg = settings(Format::Jpg, Some((1080, 1080)), Fit::Fit);
+        let colour = Background::Color { color: BLUE };
+        let out =
+            image::load_from_memory(&refiner.export(&ip, &mp, &edits, &colour, &jpg).unwrap())
+                .unwrap();
+        assert_eq!(out.color(), image::ColorType::Rgb8);
+        assert_eq!((out.width(), out.height()), (1080, 1080));
+        let out = out.to_rgb8();
+        // The corners (background, and the band Fit leaves) are the colour.
+        for (x, y) in [(5, 5), (1074, 5), (5, 1074), (1074, 1074), (540, 150)] {
+            assert!(
+                near(out.get_pixel(x, y).0, BLUE, 6),
+                "({x},{y}) {:?}",
+                out.get_pixel(x, y)
+            );
+        }
+        // The subject (the disc in the middle) is the photo, scaled 4.5×.
+        assert!(
+            near(out.get_pixel(540, 540).0, [120, 90, 90], 10),
+            "{:?}",
+            out.get_pixel(540, 540)
+        );
+
+        // A transparent background in a JPG becomes white.
+        let out = image::load_from_memory(
+            &refiner
+                .export(&ip, &mp, &edits, &Background::Transparent, &jpg)
+                .unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        assert!(near(out.get_pixel(5, 5).0, [255, 255, 255], 4));
+    }
+
+    #[test]
+    fn export_sizes_are_exact() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-sizes");
+        let (ip, mp) = scene(&dir, 300, 200);
+        let refiner = Refiner::default();
+        let edits = some_edits();
+        let presets = [(1080, 1080), (1080, 1350), (1080, 1920), (1280, 720)];
+        for size in presets {
+            for fit in [Fit::Fit, Fit::Fill] {
+                let png = settings(Format::Png, Some(size), fit);
+                let bytes = refiner
+                    .export(&ip, &mp, &edits, &Background::Transparent, &png)
+                    .unwrap();
+                let out = image::load_from_memory(&bytes).unwrap();
+                assert_eq!((out.width(), out.height()), size, "{fit:?}");
+            }
+        }
+        for format in [Format::Webp, Format::Jpg] {
+            let s = settings(format, Some((1080, 1350)), Fit::Fill);
+            let bytes = refiner
+                .export(&ip, &mp, &edits, &Background::Color { color: BLUE }, &s)
+                .unwrap();
+            let out = image::load_from_memory(&bytes).unwrap();
+            assert_eq!((out.width(), out.height()), (1080, 1350), "{format:?}");
+        }
+        // The original size.
+        let png = settings(Format::Png, None, Fit::Fill);
+        let out = image::load_from_memory(
+            &refiner
+                .export(&ip, &mp, &edits, &Background::Transparent, &png)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!((out.width(), out.height()), (300, 200));
+    }
+
+    #[test]
+    fn blur_and_image_backgrounds_in_the_export() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-backgrounds");
+        let (ip, mp) = scene(&dir, 240, 180);
+        let refiner = Refiner::default();
+        let edits = Edits {
+            edges: EdgeSettings::default(),
+            strokes: vec![],
+        };
+        let jpg = settings(Format::Jpg, Some((1280, 720)), Fit::Fit);
+
+        let blur = Background::Blur { strength: 30.0 };
+        let out = image::load_from_memory(&refiner.export(&ip, &mp, &edits, &blur, &jpg).unwrap())
+            .unwrap();
+        assert_eq!(out.color(), image::ColorType::Rgb8);
+        // Far from the subject, the photo's blue channel (90) shows through the blur.
+        let p = out.to_rgb8().get_pixel(20, 360).0;
+        assert!((p[2] as i32 - 90).abs() <= 6, "{p:?}");
+
+        let green = dir.join("green.png");
+        RgbaImage::from_pixel(50, 40, image::Rgba([20, 200, 60, 255]))
+            .save(&green)
+            .unwrap();
+        let picture = Background::Image {
+            path: green.to_string_lossy().into_owned(),
+        };
+        let out =
+            image::load_from_memory(&refiner.export(&ip, &mp, &edits, &picture, &jpg).unwrap())
+                .unwrap()
+                .to_rgb8();
+        assert!(
+            near(out.get_pixel(10, 10).0, [20, 200, 60], 6),
+            "{:?}",
+            out.get_pixel(10, 10)
+        );
+        let missing = Background::Image {
+            path: dir.join("nope.png").to_string_lossy().into_owned(),
+        };
+        assert!(refiner.export(&ip, &mp, &edits, &missing, &jpg).is_err());
+    }
+
+    #[test]
+    fn export_keeps_the_colour_profile() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-icc");
+        let (ip, mp) = scene(&dir, 60, 40);
+        let icc: Vec<u8> = (0..200u8).collect();
+        let original = image::open(&ip).unwrap().to_rgba8();
+        std::fs::write(
+            &ip,
+            encode::encode(&original, Format::Png, 90, Some(&icc)).unwrap(),
+        )
+        .unwrap();
+        let refiner = Refiner::default();
+        let edits = Edits {
+            edges: EdgeSettings::default(),
+            strokes: vec![],
+        };
+        let bytes = refiner
+            .export(
+                &ip,
+                &mp,
+                &edits,
+                &Background::Transparent,
+                &settings(Format::Jpg, None, Fit::Fit),
+            )
+            .unwrap();
+        use image::ImageDecoder;
+        let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert_eq!(decoder.icc_profile().unwrap(), Some(icc));
+    }
+
+    #[test]
+    fn previews_have_the_frame_shape() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-preview");
+        let (ip, mp) = scene(&dir, 1600, 1200);
+        let refiner = Refiner::default();
+        let edits = some_edits();
+        let s = settings(Format::Png, Some((1080, 1920)), Fit::Fill);
+        let (h, px) = parse(
+            &refiner
+                .export_preview(&ip, &mp, &edits, &Background::Blur { strength: 40.0 }, &s)
+                .unwrap(),
+        );
+        assert!(h[0] as u64 * h[1] as u64 <= EXPORT_PREVIEW_PIXELS);
+        assert!(
+            (h[0] as f32 / h[1] as f32 - 1080.0 / 1920.0).abs() < 0.01,
+            "{h:?}"
+        );
+        assert_eq!(px.len(), (h[0] * h[1] * 4) as usize);
+
+        // The stage background is the shape of the image.
+        let (h, _) = parse(
+            &refiner
+                .stage_background(&ip, &mp, &edits, &Background::Blur { strength: 40.0 })
+                .unwrap(),
+        );
+        assert!(h[0] as u64 * h[1] as u64 <= PREVIEW_PIXELS);
+        assert!(
+            (h[0] as f32 / h[1] as f32 - 4.0 / 3.0).abs() < 0.01,
+            "{h:?}"
+        );
     }
 
     /// Times edits on a 12-megapixel image: `cargo test --release refine_timings --
