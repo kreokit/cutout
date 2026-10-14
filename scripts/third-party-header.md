@@ -29,6 +29,13 @@ On Windows, ONNX Runtime is linked against `DirectML.dll`. KreoKit Cutout does *
 ship that file: the copy that comes with Windows 10 (version 1903 or later) and Windows 11
 is used, and the app runs on the CPU only.
 
+## libwebp (compiled into the app)
+
+WebP export uses **libwebp 1.6.0**, © Google Inc., **BSD-3-Clause** licence
+(<https://chromium.googlesource.com/webm/libwebp>), built from source and statically
+linked through the `libwebp-sys` crate (0.14, MIT). Its licence and the additional patent
+grant ship with the app as `licenses/LIBWEBP-COPYING.txt` and `licenses/LIBWEBP-PATENTS.txt`.
+
 ## Fonts (bundled)
 
 Inter (interface font), © The Inter Project Authors, **SIL Open Font License 1.1**; the

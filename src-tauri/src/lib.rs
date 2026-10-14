@@ -3,6 +3,8 @@
 mod background;
 mod cpu;
 mod cutout;
+#[cfg_attr(not(test), allow(dead_code))]
+mod encode;
 mod images;
 #[cfg_attr(not(test), allow(dead_code))]
 mod layout;
