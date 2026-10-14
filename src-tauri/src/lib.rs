@@ -1,3 +1,6 @@
+// Used by the export (next commits).
+#[cfg_attr(not(test), allow(dead_code))]
+mod background;
 mod cpu;
 mod cutout;
 mod images;

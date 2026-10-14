@@ -325,7 +325,7 @@ fn box_blur(data: &mut [f32], w: usize, h: usize, r: usize) {
 }
 
 /// Three box blurs approximating a Gaussian with standard deviation `sigma`.
-fn gaussian_blur(data: &mut [f32], w: usize, h: usize, sigma: f32) {
+pub(crate) fn gaussian_blur(data: &mut [f32], w: usize, h: usize, sigma: f32) {
     if sigma < 0.3 {
         return;
     }
