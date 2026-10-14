@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Redo2, Undo2 } from "lucide-react";
 import { fileName, formatBytes } from "../lib/images";
+import { closeRefine } from "../lib/refine";
 import { cutoutKey, isDownloaded, useCutouts } from "../store/cutouts";
+import { historyOf, useEdits } from "../store/edits";
 import { openPaths, useSession } from "../store/session";
 import { Button, IconButton, SectionLabel, Segmented, Tooltip } from "../ui";
+import { CutoutCanvas } from "./CutoutCanvas";
 import { CutoutSection, StageStatus } from "./CutoutStatus";
+import { EdgesSection } from "./EdgesSection";
 import { Stage, ViewMode } from "./Stage";
 import { TopBar } from "./TopBar";
 import "../styles/editor.css";
@@ -23,6 +27,29 @@ export function Editor() {
   const state = useCutouts((s) => (image ? s.byImage[cutoutKey(image.path, model)] : undefined));
   const run = useCutouts((s) => s.run);
   const [mode, setMode] = useState<ViewMode>("after");
+  const editKey = image ? cutoutKey(image.path, model) : "";
+  const history = useEdits((s) => historyOf(s.byImage, editKey));
+  const live = useEdits((s) => s.live[editKey]);
+  const { undo, redo } = useEdits.getState();
+  const done = state?.status === "done";
+
+  // ⌘Z undo, ⇧⌘Z (or Ctrl+Y) redo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable]")) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo(editKey);
+      } else if ((key === "z" && e.shiftKey) || (key === "y" && e.ctrlKey)) {
+        e.preventDefault();
+        redo(editKey);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editKey, undo, redo]);
 
   // Cut out the shown image as soon as the model is there.
   useEffect(() => {
@@ -56,7 +83,10 @@ export function Editor() {
   return (
     <div className="editor">
       <TopBar
-        onHome={close}
+        onHome={() => {
+          close();
+          void closeRefine();
+        }}
         title={
           <>
             <span className="topbar-name" title={image.path} data-tauri-drag-region>
@@ -80,6 +110,22 @@ export function Editor() {
           </>
         }
       >
+        <span className="history-buttons">
+          <IconButton
+            label="Undo"
+            shortcut="⌘Z"
+            icon={Undo2}
+            disabled={history.past.length === 0}
+            onClick={() => undo(editKey)}
+          />
+          <IconButton
+            label="Redo"
+            shortcut="⇧⌘Z"
+            icon={Redo2}
+            disabled={history.future.length === 0}
+            onClick={() => redo(editKey)}
+          />
+        </span>
         <Tooltip label="Export comes with the cutout in the next alpha">
           <span className="export-slot">
             <Button variant="primary" icon={Download} disabled>
@@ -96,7 +142,7 @@ export function Editor() {
               label="View"
               value={mode}
               onChange={setMode}
-              disabled={state?.status !== "done"}
+              disabled={!done}
               options={[
                 { value: "before", label: "Before" },
                 { value: "after", label: "After" },
@@ -109,7 +155,14 @@ export function Editor() {
             original={convertFileSrc(image.path)}
             cutout={
               state?.status === "done" ? (
-                <img src={convertFileSrc(state.result.cutout)} alt="" draggable={false} />
+                <CutoutCanvas
+                  key={editKey}
+                  path={image.path}
+                  model={model}
+                  cutoutFile={state.result.cutout}
+                  edits={history.edits}
+                  live={live}
+                />
               ) : null
             }
             mode={mode}
@@ -132,6 +185,7 @@ export function Editor() {
             </dl>
           </section>
           <CutoutSection state={state} />
+          <EdgesSection editKey={editKey} disabled={!done} />
         </aside>
       </div>
     </div>
