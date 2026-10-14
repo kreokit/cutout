@@ -34,6 +34,13 @@ rayon = "1"
 sha2 = "0.11.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
+# Our pixel loops (cutout, refine) are far too slow unoptimised, even in `tauri dev`.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package.rayon-core]
+opt-level = 3
+
 # Decoding photos in an unoptimised debug build takes seconds; optimise the image crates.
 [profile.dev.package.image]
 opt-level = 3
