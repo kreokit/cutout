@@ -162,3 +162,12 @@ jobs:
                    "$res/licenses/ONNXRUNTIME-ThirdPartyNotices.txt"; do
             [[ -f "$f" ]] && echo "ok  $f" || { echo "missing $f"; exit 1; }
           done
+
+      # The runners have a new macOS, where everything runs; this catches what would only
+      # fail on macOS 12 (weak imports from a newer SDK, a too-new minimum macOS). ONNX
+      # Runtime 1.22's static libraries are built for macOS 13.3, so this matters here.
+      - name: Check the macOS binary runs on macOS 12
+        if: runner.os == 'macOS'
+        run: |
+          python3 scripts/check_macos_binary.py --min-macos "$MACOSX_DEPLOYMENT_TARGET" \
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
