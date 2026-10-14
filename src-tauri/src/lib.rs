@@ -3,6 +3,8 @@ mod cutout;
 mod images;
 mod models;
 mod recent;
+#[allow(dead_code)] // used by the refine commands (next commit)
+mod refine;
 #[cfg(test)]
 mod synthetic;
 
