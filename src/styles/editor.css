@@ -52,7 +52,8 @@
 }
 
 .stage-layer > img,
-.stage-layer > canvas {
+.stage-layer > canvas,
+.stage-layer > .stage-backdrop {
   position: absolute;
   inset: 0;
   display: block;
@@ -324,4 +325,19 @@
   border-radius: 50%;
   border: 1px dashed rgb(255 255 255 / 0.7);
   transform: translate(-50%, -50%);
+}
+
+.background-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.background-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-2);
 }

@@ -7,14 +7,16 @@ import { LivePainter } from "../lib/paint";
 import { Render, Stroke, closeRefine, workingOriginal } from "../lib/refine";
 import { cutoutKey, isDownloaded, useCutouts } from "../store/cutouts";
 import { useBrush } from "../store/brush";
-import { historyOf, useEdits } from "../store/edits";
+import { canRedo, canUndo, historyOf, useEdits } from "../store/edits";
 import { openPaths, useSession } from "../store/session";
 import { Button, IconButton, SectionLabel, Segmented, Tooltip } from "../ui";
+import { BackgroundSection } from "./BackgroundSection";
 import { CutoutCanvas } from "./CutoutCanvas";
 import { CutoutSection, StageStatus } from "./CutoutStatus";
 import { EdgesSection } from "./EdgesSection";
 import { RefineSection } from "./RefineSection";
 import { Stage, StageBrush, ViewMode } from "./Stage";
+import { StageBackdrop } from "./StageBackdrop";
 import { TopBar } from "./TopBar";
 import "../styles/editor.css";
 
@@ -33,6 +35,9 @@ export function Editor() {
   const editKey = image ? cutoutKey(image.path, model) : "";
   const history = useEdits((s) => historyOf(s.byImage, editKey));
   const live = useEdits((s) => s.live[editKey]);
+  const background = useEdits((s) => s.liveBackground ?? s.background.value);
+  const undoable = useEdits((s) => canUndo(s, editKey));
+  const redoable = useEdits((s) => canRedo(s, editKey));
   const { undo, redo } = useEdits.getState();
   const done = state?.status === "done";
 
@@ -192,14 +197,14 @@ export function Editor() {
             label="Undo"
             shortcut="⌘Z"
             icon={Undo2}
-            disabled={history.past.length === 0}
+            disabled={!undoable}
             onClick={() => undo(editKey)}
           />
           <IconButton
             label="Redo"
             shortcut="⇧⌘Z"
             icon={Redo2}
-            disabled={history.future.length === 0}
+            disabled={!redoable}
             onClick={() => redo(editKey)}
           />
         </span>
@@ -232,16 +237,19 @@ export function Editor() {
             original={convertFileSrc(image.path)}
             cutout={
               state?.status === "done" ? (
-                <CutoutCanvas
-                  key={editKey}
-                  path={image.path}
-                  model={model}
-                  cutoutFile={state.result.cutout}
-                  edits={history.edits}
-                  live={live}
-                  canvasRef={canvasRef}
-                  painting={painting}
-                />
+                <>
+                  <StageBackdrop path={image.path} model={model} edits={history.edits} background={background} />
+                  <CutoutCanvas
+                    key={editKey}
+                    path={image.path}
+                    model={model}
+                    cutoutFile={state.result.cutout}
+                    edits={history.edits}
+                    live={live}
+                    canvasRef={canvasRef}
+                    painting={painting}
+                  />
+                </>
               ) : null
             }
             mode={mode}
@@ -265,6 +273,7 @@ export function Editor() {
             </dl>
           </section>
           <CutoutSection state={state} />
+          <BackgroundSection editKey={editKey} disabled={!done} />
           <RefineSection disabled={!done} beforeView={mode === "before"} />
           <EdgesSection editKey={editKey} disabled={!done} />
         </aside>
