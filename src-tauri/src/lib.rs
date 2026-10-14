@@ -4,6 +4,8 @@ mod background;
 mod cpu;
 mod cutout;
 mod images;
+#[cfg_attr(not(test), allow(dead_code))]
+mod layout;
 mod models;
 mod recent;
 mod refine;
