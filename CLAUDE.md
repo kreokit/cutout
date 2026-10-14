@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-14):** Milestones 1–2 are done and user-tested. Milestone 3 (Refine) is built and waiting for the user's test in the app.
+**Status (2026-10-14):** Milestones 1–3 are done and user-tested. Next: Milestone 4 (Backgrounds + export).
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -86,7 +86,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 1. ✅ **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
 2. ✅ **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
-3. **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
+3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
 5. **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
 6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha
