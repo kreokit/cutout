@@ -299,3 +299,29 @@
   align-items: center;
   gap: 2px;
 }
+
+.inspector-note {
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+/* Brush cursor: the outer circle is the size, the dashed one where softness starts. Two
+   rings (dark and light) keep it visible on any image. */
+.brush-cursor {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 0.9);
+  outline: 1px solid rgb(0 0 0 / 0.6);
+  transform: translate(-50%, -50%);
+}
+
+.brush-cursor-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border: 1px dashed rgb(255 255 255 / 0.7);
+  transform: translate(-50%, -50%);
+}

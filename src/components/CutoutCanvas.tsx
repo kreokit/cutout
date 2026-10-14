@@ -23,6 +23,7 @@ export function CutoutCanvas({
   edits,
   live,
   canvasRef,
+  painting,
 }: {
   path: string;
   model: CutoutModel;
@@ -32,6 +33,8 @@ export function CutoutCanvas({
   /** Edge settings of a slider being dragged. */
   live: EdgeSettings | undefined;
   canvasRef?: React.RefObject<HTMLCanvasElement | null>;
+  /** True while a brush stroke is painted live into the canvas: renders wait. */
+  painting?: React.RefObject<boolean>;
 }) {
   const own = useRef<HTMLCanvasElement>(null);
   const canvas = canvasRef ?? own;
@@ -83,8 +86,13 @@ export function CutoutCanvas({
       const full = !req.preview && needFull.current;
       const r = await renderRefined(path, model, req.edits, { preview: req.preview, full });
       if (!alive.current) return;
-      draw(r, req.preview);
-      needFull.current = req.preview || (needFull.current && !full);
+      if (painting?.current) {
+        // Don't draw over a stroke being painted; redraw everything after it instead.
+        needFull.current = true;
+      } else {
+        draw(r, req.preview);
+        needFull.current = req.preview || (needFull.current && !full);
+      }
     } catch (e) {
       if (alive.current) toast(String(e), "error");
     } finally {

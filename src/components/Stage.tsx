@@ -3,12 +3,14 @@ import { ChevronsLeftRight, ZoomIn, ZoomOut } from "lucide-react";
 import { Split, splitAt, splitForKey } from "../lib/compare";
 import { Size } from "../lib/fit";
 import {
+  Point,
   View,
   centeredView,
   clampView,
   fitView,
   panBy,
   stepScale,
+  toImage,
   wheelAction,
   zoomBy,
   zoomTo,
@@ -21,6 +23,17 @@ export type ViewMode = "before" | "after" | "compare";
 const STAGE_PADDING = 32;
 /** From this zoom on, pixels are drawn sharp (no smoothing) for precise edge work. */
 const PIXELATED_FROM = 2;
+
+/** A brush for painting on the image; points are in image pixels. */
+export interface StageBrush {
+  /** Diameter in screen pixels. */
+  size: number;
+  softness: number;
+  /** Starts a stroke; false if painting isn't possible right now. `scale` is the zoom. */
+  onStart: (p: Point, scale: number) => boolean;
+  onMove: (p: Point) => void;
+  onEnd: () => void;
+}
 
 /** WebKit's trackpad pinch (GestureEvent isn't in the DOM typings). */
 interface PinchEvent extends UIEvent {
@@ -35,7 +48,7 @@ const isTyping = (target: EventTarget | null) =>
 /**
  * The image on a transparency checkerboard, zoomable and pannable: the original, the
  * cutout, or both split by a draggable divider. Scroll pans; ⌘/Ctrl + scroll and pinch
- * zoom; Space + drag, middle-drag or (with `panWithLeftButton`) any drag pans.
+ * zoom; Space + drag, middle-drag or (without a `brush`) any drag pans.
  */
 export function Stage({
   original,
@@ -43,7 +56,7 @@ export function Stage({
   mode,
   size,
   status,
-  panWithLeftButton = true,
+  brush,
 }: {
   original: string;
   /** The cutout layer (an image or canvas sized `size`), or null while there is none. */
@@ -51,7 +64,8 @@ export function Stage({
   mode: ViewMode;
   size: Size;
   status: React.ReactNode;
-  panWithLeftButton?: boolean;
+  /** When set, the left button paints instead of panning. */
+  brush?: StageBrush;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Size>({ width: 0, height: 0 });
@@ -165,24 +179,46 @@ export function Stage({
     };
   });
 
-  // Dragging pans (middle button, Space + drag, or any drag when allowed).
+  // Dragging pans (middle button, Space + drag, or any drag without a brush) or paints.
   const last = useRef<{ x: number; y: number } | null>(null);
+  const [painting, setPainting] = useState(false);
+  const [hover, setHover] = useState<Point | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
-    const pan = e.button === 1 || (e.button === 0 && (space || panWithLeftButton));
-    if (!pan || (e.target as HTMLElement).closest(".compare-divider, .zoom-bar, .stage-card")) return;
+    if ((e.target as HTMLElement).closest(".compare-divider, .zoom-bar, .stage-card")) return;
+    const pan = e.button === 1 || (e.button === 0 && (space || !brush));
+    if (!pan && e.button === 0 && brush && view) {
+      const p = stagePoint(e.clientX, e.clientY);
+      if (brush.onStart(toImage(view, p), view.scale)) {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setPainting(true);
+      }
+      return;
+    }
+    if (!pan) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     last.current = { x: e.clientX, y: e.clientY };
     setPanning(true);
   };
   const onPointerMove = (e: React.PointerEvent) => {
+    const p = stagePoint(e.clientX, e.clientY);
+    setHover(p);
+    if (painting && view && brush) {
+      brush.onMove(toImage(view, p));
+      return;
+    }
     if (!last.current) return;
     const dx = e.clientX - last.current.x;
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
     change((v) => panBy(v, dx, dy));
   };
-  const endPan = () => {
+  const endDrag = () => {
+    if (painting) {
+      setPainting(false);
+      brush?.onEnd();
+    }
     last.current = null;
     setPanning(false);
   };
@@ -205,7 +241,8 @@ export function Stage({
     bottom: Math.min(box.height, view.y + size.height * s),
   };
   const dividerX = view ? view.x + split * size.width * s : 0;
-  const cursor = panning ? "grabbing" : space || panWithLeftButton ? "grab" : undefined;
+  const showBrush = brush && !space && !panning && hover !== null;
+  const cursor = panning ? "grabbing" : space || !brush ? "grab" : "none";
 
   return (
     <div
@@ -214,8 +251,9 @@ export function Stage({
       style={{ cursor }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={endPan}
-      onPointerCancel={endPan}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onPointerLeave={() => setHover(null)}
       onAuxClick={(e) => e.preventDefault()}
     >
       {failed ? (
@@ -260,6 +298,20 @@ export function Stage({
             )}
           </>
         )
+      )}
+      {showBrush && (
+        <div
+          className="brush-cursor"
+          style={{ left: hover.x, top: hover.y, width: brush.size, height: brush.size }}
+          aria-hidden
+        >
+          {brush.softness > 0.05 && brush.size * (1 - brush.softness) >= 4 && (
+            <div
+              className="brush-cursor-core"
+              style={{ width: brush.size * (1 - brush.softness), height: brush.size * (1 - brush.softness) }}
+            />
+          )}
+        </div>
       )}
       {view && (
         <div className="zoom-bar">

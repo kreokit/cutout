@@ -174,6 +174,28 @@ async fn render_refined(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// The original of `path` at the editor's working size (same header as a render).
+#[tauri::command]
+async fn working_original(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    path: String,
+    model: CutoutModel,
+) -> Result<tauri::ipc::Response, String> {
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cannot find the cache folder: {e}"))?;
+    let refiner = refiner.inner().clone();
+    let bytes = blocking(move || {
+        let image = Path::new(&path);
+        let (_, mask) = cutout::result_paths(&cache, image, model)?;
+        refiner.original(image, &mask)
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Frees the refine session (when leaving the editor).
 #[tauri::command]
 fn close_refine(refiner: State<'_, Arc<session::Refiner>>) {
@@ -272,6 +294,7 @@ pub fn run() {
             download_model,
             cut_out,
             render_refined,
+            working_original,
             close_refine,
             cancel,
             list_recent,

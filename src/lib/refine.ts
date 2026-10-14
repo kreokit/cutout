@@ -74,4 +74,9 @@ export async function renderRefined(
   return parseRender(buffer);
 }
 
+/** The original at the editor's working size (for restoring with the live brush). */
+export async function workingOriginal(path: string, model: CutoutModel): Promise<Render> {
+  return parseRender(await invoke<ArrayBuffer>("working_original", { path, model }));
+}
+
 export const closeRefine = () => invoke<void>("close_refine");

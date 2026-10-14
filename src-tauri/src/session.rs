@@ -204,7 +204,46 @@ fn header(layer_size: (u32, u32), region: Rect, pixels: Vec<u8>) -> Vec<u8> {
     out
 }
 
+/// Makes `slot` hold the session for `image_path` and `mask_path`, loading it if needed.
+fn load(slot: &mut Option<Session>, image_path: &Path, mask_path: &Path) -> Result<(), String> {
+    let key = (image_path.to_path_buf(), mask_path.to_path_buf());
+    if slot.as_ref().is_some_and(|s| s.key == key) {
+        return Ok(());
+    }
+    *slot = None; // free the previous image first
+    let image = images::decode(image_path)?.to_rgba8();
+    let mut base = image::open(mask_path)
+        .map_err(|e| format!("cannot read the cutout mask: {e}"))?
+        .to_luma8();
+    if base.dimensions() != image.dimensions() {
+        base = imageops::resize(&base, image.width(), image.height(), FilterType::Triangle);
+    }
+    let working = Layer::new(&image, &base, MAX_WORKING_PIXELS);
+    *slot = Some(Session {
+        key,
+        image,
+        base,
+        working,
+        preview: None,
+    });
+    Ok(())
+}
+
 impl Refiner {
+    /// The original image at the working size (fully opaque where the photo is), with
+    /// the same header as a render: the brush's live preview restores from it.
+    pub fn original(&self, image_path: &Path, mask_path: &Path) -> Result<Vec<u8>, String> {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        load(&mut slot, image_path, mask_path)?;
+        let image = &slot.as_ref().unwrap().working.image;
+        let size = image.dimensions();
+        Ok(header(
+            size,
+            Rect::full(size.0, size.1),
+            image.as_raw().clone(),
+        ))
+    }
+
     /// Renders `edits` for `image_path` with its AI mask at `mask_path`. With `preview`,
     /// renders the whole image small (for live slider changes); otherwise renders the
     /// working copy and returns only what changed since the last render (all of it with
@@ -218,25 +257,7 @@ impl Refiner {
         full: bool,
     ) -> Result<Vec<u8>, String> {
         let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let key = (image_path.to_path_buf(), mask_path.to_path_buf());
-        if slot.as_ref().is_none_or(|s| s.key != key) {
-            *slot = None; // free the previous image first
-            let image = images::decode(image_path)?.to_rgba8();
-            let mut base = image::open(mask_path)
-                .map_err(|e| format!("cannot read the cutout mask: {e}"))?
-                .to_luma8();
-            if base.dimensions() != image.dimensions() {
-                base = imageops::resize(&base, image.width(), image.height(), FilterType::Triangle);
-            }
-            let working = Layer::new(&image, &base, MAX_WORKING_PIXELS);
-            *slot = Some(Session {
-                key,
-                image,
-                base,
-                working,
-                preview: None,
-            });
-        }
+        load(&mut slot, image_path, mask_path)?;
         let Session {
             image,
             base,
@@ -380,6 +401,15 @@ mod tests {
         let (h, px) = parse(&refiner.render(&ip, &mp, &edits, false, true).unwrap());
         assert_eq!(h[4..], [160, 120]);
         assert_eq!(px, *expected(&ip, &mp, &edits).as_raw());
+    }
+
+    #[test]
+    fn sends_the_working_original() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-session-original");
+        let (ip, mp) = scene(&dir, 40, 30);
+        let (h, px) = parse(&Refiner::default().original(&ip, &mp).unwrap());
+        assert_eq!(h, [40, 30, 0, 0, 40, 30]);
+        assert_eq!(px, *image::open(&ip).unwrap().to_rgba8().as_raw());
     }
 
     #[test]
