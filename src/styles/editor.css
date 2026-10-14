@@ -32,20 +32,35 @@
   grid-template-columns: minmax(0, 1fr) var(--size-inspector);
 }
 
-/* Stage: the image is sized in JS to fit (lib/fit.ts) and centred. */
+/* Stage: layers are placed by the view transform (lib/view.ts), in CSS pixels. */
 
 .stage {
   position: relative;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  place-items: center;
   overflow: hidden;
   background: var(--color-stage);
+  touch-action: none;
+}
+
+.stage-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  user-select: none;
+}
+
+.stage-layer > img,
+.stage-layer > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* Transparency checkerboard: two flat greys in 8 px squares, only under the image. */
 .checkerboard {
+  position: absolute;
   --checker-a: #2a2a30;
   --checker-b: #1f1f24;
   background-color: var(--checker-b);
@@ -58,27 +73,33 @@
   background-size: 16px 16px;
 }
 
-.checkerboard img {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.stage-zoom {
+.zoom-bar {
   position: absolute;
   left: var(--space-3);
   bottom: var(--space-3);
-  padding: 2px var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+}
+
+.zoom-value {
+  min-width: 44px;
+  text-align: center;
   font: var(--text-meta);
   color: var(--color-text-2);
   font-variant-numeric: tabular-nums;
 }
 
 .stage-error {
-  max-width: 320px;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-8);
   text-align: center;
   color: var(--color-text-2);
 }
@@ -203,19 +224,8 @@
   padding-top: var(--space-3);
 }
 
-.checkerboard {
-  position: relative;
-}
-
-.checkerboard img {
-  position: absolute;
-  inset: 0;
-}
-
 .compare-divider {
   position: absolute;
-  top: 0;
-  bottom: 0;
   width: 24px;
   margin-left: -12px;
   cursor: ew-resize;
