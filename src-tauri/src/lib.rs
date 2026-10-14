@@ -3,8 +3,8 @@ mod cutout;
 mod images;
 mod models;
 mod recent;
-#[allow(dead_code)] // used by the refine commands (next commit)
 mod refine;
+mod session;
 #[cfg(test)]
 mod synthetic;
 
@@ -146,6 +146,40 @@ async fn cut_out(
     Ok(result)
 }
 
+/// Renders the refined cutout of `path` (already cut out with `model`) with `edits`, as
+/// raw RGBA after a 24-byte header (see session.rs). `preview` renders the whole image
+/// small for live slider changes; otherwise only what changed comes back (everything
+/// with `full`).
+#[tauri::command]
+async fn render_refined(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    path: String,
+    model: CutoutModel,
+    edits: session::Edits,
+    preview: bool,
+    full: bool,
+) -> Result<tauri::ipc::Response, String> {
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cannot find the cache folder: {e}"))?;
+    let refiner = refiner.inner().clone();
+    let bytes = blocking(move || {
+        let image = Path::new(&path);
+        let (_, mask) = cutout::result_paths(&cache, image, model)?;
+        refiner.render(image, &mask, &edits, preview, full)
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Frees the refine session (when leaving the editor).
+#[tauri::command]
+fn close_refine(refiner: State<'_, Arc<session::Refiner>>) {
+    refiner.clear();
+}
+
 /// Stops a running model download.
 #[tauri::command]
 fn cancel(cancel: State<'_, CancelFlag>) {
@@ -231,11 +265,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(CancelFlag::default())
         .manage(Arc::new(cutout::Engine::default()))
+        .manage(Arc::new(session::Refiner::default()))
         .invoke_handler(tauri::generate_handler![
             open_images,
             list_models,
             download_model,
             cut_out,
+            render_refined,
+            close_refine,
             cancel,
             list_recent,
             remove_recent,

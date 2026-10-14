@@ -30,6 +30,7 @@ ureq = "3"
 # Upgrade path and details: CLAUDE.md ("Inference"). Re-test macOS 12 and cpu.rs after upgrading.
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"] }
 ndarray = "0.16"
+rayon = "1"
 sha2 = "0.11.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 

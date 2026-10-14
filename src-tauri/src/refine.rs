@@ -372,17 +372,79 @@ pub const DECONTAMINATE_REACH: u32 = (BLUR_LARGE / 2 + BLUR_SMALL / 2) as u32;
 const BLUR_LARGE: usize = 90;
 const BLUR_SMALL: usize = 6;
 
+/// Alpha values treated as fully transparent (≤) or fully opaque (≥) by
+/// decontamination: their colour is kept, and tiles with only such pixels are skipped.
+const SOLID_LOW: u8 = 2;
+const SOLID_HIGH: u8 = 253;
+/// Decontamination works in tiles of this size (plus [`DECONTAMINATE_REACH`] of margin).
+const TILE: u32 = 256;
+
+fn is_edge(a: u8) -> bool {
+    a > SOLID_LOW && a < SOLID_HIGH
+}
+
 /// Estimates the true foreground colour of semi-transparent pixels and replaces their
 /// colour with it, so the old background no longer shows at the edges ("dark fringe").
 /// Implements blur-fusion foreground estimation from Forte & Pitié, "Approximate Fast
 /// Foreground Colour Estimation" (ICIP 2021): two passes with box blurs of 90 and 6 px.
-/// `alpha` is the final mask; fully opaque pixels keep their colour exactly.
+/// `alpha` is the final mask; (nearly) transparent and opaque pixels keep their colour.
+///
+/// Only tiles that contain edge pixels are computed, each with enough margin to be
+/// exact, in parallel.
 pub fn decontaminate(image: &RgbaImage, alpha: &GrayImage) -> RgbaImage {
+    use rayon::prelude::*;
+    let (w, h) = image.dimensions();
+    let mut tiles = Vec::new();
+    for ty in (0..h).step_by(TILE as usize) {
+        for tx in (0..w).step_by(TILE as usize) {
+            let tile = Rect {
+                x: tx,
+                y: ty,
+                width: TILE.min(w - tx),
+                height: TILE.min(h - ty),
+            };
+            let edge = (tile.y..tile.y + tile.height).any(|y| {
+                (tile.x..tile.x + tile.width).any(|x| is_edge(alpha.get_pixel(x, y).0[0]))
+            });
+            if edge {
+                tiles.push(tile);
+            }
+        }
+    }
+    let results: Vec<(Rect, RgbaImage)> = tiles
+        .into_par_iter()
+        .map(|tile| {
+            let crop = tile.grown(DECONTAMINATE_REACH + 2, w, h);
+            let sub = image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
+                .to_image();
+            let sub_a = image::imageops::crop_imm(alpha, crop.x, crop.y, crop.width, crop.height)
+                .to_image();
+            let done = decontaminate_whole(&sub, &sub_a);
+            let inner = image::imageops::crop_imm(
+                &done,
+                tile.x - crop.x,
+                tile.y - crop.y,
+                tile.width,
+                tile.height,
+            )
+            .to_image();
+            (tile, inner)
+        })
+        .collect();
+    let mut out = image.clone();
+    for (tile, inner) in results {
+        image::imageops::replace(&mut out, &inner, tile.x as i64, tile.y as i64);
+    }
+    out
+}
+
+/// [`decontaminate`] computed over the whole image at once.
+fn decontaminate_whole(image: &RgbaImage, alpha: &GrayImage) -> RgbaImage {
     let (w, h) = (image.width() as usize, image.height() as usize);
     let n = w * h;
     let a: Vec<f32> = alpha.as_raw().iter().map(|&v| v as f32 / 255.0).collect();
     let mut out = image.clone();
-    if a.iter().all(|&v| v == 0.0 || v == 1.0) {
+    if !alpha.as_raw().iter().any(|&v| is_edge(v)) {
         return out;
     }
     // Blurred alpha per pass, shared by the three colour channels.
@@ -414,7 +476,7 @@ pub fn decontaminate(image: &RgbaImage, alpha: &GrayImage) -> RgbaImage {
             }
         }
         for (i, p) in out.as_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            if a[i] > 0.0 && a[i] < 1.0 {
+            if is_edge(alpha.as_raw()[i]) {
                 p[c] = (f[i] * 255.0).round() as u8;
             }
         }

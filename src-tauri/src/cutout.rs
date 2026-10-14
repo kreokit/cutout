@@ -150,8 +150,8 @@ fn secs(since: Instant) -> f32 {
     since.elapsed().as_secs_f32()
 }
 
-/// Where the results for `image` with `model` are cached.
-fn result_paths(
+/// Where the results for `image` with `model` are cached (cutout PNG, mask PNG).
+pub fn result_paths(
     cache_dir: &Path,
     image: &Path,
     model: CutoutModel,
