@@ -68,12 +68,9 @@ jobs:
     name: Draft release
     needs: checks
     runs-on: ubuntu-latest
-    outputs:
-      id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v4
-      - id: draft
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -81,7 +78,6 @@ jobs:
               --title "KreoKit Cutout ${TAG#v}" \
               --notes-file "docs/release-notes/$TAG.md"
           fi
-          echo "id=$(gh release view "$TAG" --json databaseId --jq .databaseId)" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
@@ -140,12 +136,10 @@ jobs:
       # (pyke's static libraries) during the Rust build; see CLAUDE.md, "Inference".
 
       - run: pnpm install --frozen-lockfile
-      - name: Build and upload
+      # Build only; the files are uploaded at the end, once the checks below have passed.
+      - name: Build
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         with:
-          releaseId: ${{ needs.release.outputs.id }}
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
 
       - name: Check the bundle contents
@@ -171,3 +165,24 @@ jobs:
         run: |
           python3 scripts/check_macos_binary.py --min-macos "$MACOSX_DEPLOYMENT_TARGET" \
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+
+      # Only now, after every check above passed, do files go to the draft release; a failed
+      # check never uploads anything. Same file names as tauri-action used to upload.
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          rm -rf upload && mkdir upload
+          case "${{ runner.os }}" in
+            macOS)
+              app=$(ls -d "$bundle"/macos/*.app)
+              cp "$bundle"/dmg/*.dmg upload/
+              COPYFILE_DISABLE=1 tar -czf "upload/$(basename "$app" .app)_${{ contains(matrix.target, 'x86_64') && 'x64' || 'aarch64' }}.app.tar.gz" \
+                -C "$(dirname "$app")" "$(basename "$app")" ;;
+            Windows) cp "$bundle"/nsis/*-setup.exe upload/ ;;
+            *) cp "$bundle"/appimage/*.AppImage "$bundle"/deb/*.deb upload/ ;;
+          esac
+          for f in upload/*; do mv "$f" "upload/$(basename "$f" | tr ' ' '.')"; done
+          ls -l upload
+          gh release upload "$TAG" upload/* --clobber
