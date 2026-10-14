@@ -214,6 +214,9 @@ struct Session {
     base: GrayImage,
     working: Layer,
     preview: Option<Layer>,
+    /// The last full-size export render (when the working copy is smaller): its edits,
+    /// cutout and final mask, so exporting again with other settings is quick.
+    full: Option<(Edits, RgbaImage, GrayImage)>,
 }
 
 impl Session {
@@ -286,6 +289,7 @@ fn load(
         base,
         working,
         preview: None,
+        full: None,
     });
     Ok(())
 }
@@ -350,19 +354,24 @@ impl Refiner {
             profile,
             base,
             working,
+            full,
             ..
         } = slot.as_mut().unwrap();
         let start = Instant::now();
-        // The working copy's results when it is the full size and up to date.
-        let fresh;
+        // The working copy's results when it is the full size and up to date, else the
+        // last full-size render, else a new one.
         let (cutout, mask) = match working.cached(edits) {
             Some(results) if working.scale == 1.0 => results,
             _ => {
-                let mask =
-                    refine::final_mask(&refine::edge_mask(base, &edits.edges), &edits.strokes);
-                let cutout = refine::compose(image, &mask, edits.edges.decontaminate);
-                fresh = (cutout, mask);
-                (&fresh.0, &fresh.1)
+                if full.as_ref().is_none_or(|(e, _, _)| e != edits) {
+                    *full = None; // free the old one first
+                    let mask =
+                        refine::final_mask(&refine::edge_mask(base, &edits.edges), &edits.strokes);
+                    let cutout = refine::compose(image, &mask, edits.edges.decontaminate);
+                    *full = Some((edits.clone(), cutout, mask));
+                }
+                let (_, cutout, mask) = full.as_ref().unwrap();
+                (cutout, mask)
             }
         };
         let refined = start.elapsed().as_secs_f32();
@@ -725,6 +734,34 @@ mod tests {
         assert_eq!(out.color(), image::ColorType::Rgba8);
         assert_eq!(out.to_rgba8(), want);
 
+        // Exporting again (another format) reuses the full-size render.
+        assert!(
+            small
+                .session
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .full
+                .is_some()
+        );
+        let again = small
+            .export(
+                &ip,
+                &mp,
+                &edits,
+                &Background::Transparent,
+                &settings(Format::Webp, None, Fit::Fit),
+            )
+            .unwrap();
+        assert_eq!(
+            {
+                let i = image::load_from_memory(&again).unwrap();
+                (i.width(), i.height())
+            },
+            (240, 180)
+        );
+
         // A full-size working copy: its cached render is reused, with the same result.
         let full = Refiner::default();
         full.render(&ip, &mp, &edits, false, false).unwrap();
@@ -928,6 +965,71 @@ mod tests {
             (h[0] as f32 / h[1] as f32 - 4.0 / 3.0).abs() < 0.01,
             "{h:?}"
         );
+    }
+
+    /// Times exports of 12- and 48-megapixel images: `cargo test --release export_timings
+    /// -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn export_timings() {
+        let edits = some_edits();
+        for (w, h) in [(4032, 3024), (8064, 6048)] {
+            let dir = std::env::temp_dir().join(format!("kreokit-cutout-export-{w}"));
+            let (ip, mp) = scene(&dir, w, h);
+            let refiner = Refiner::default();
+            let t = Instant::now();
+            refiner.render(&ip, &mp, &edits, false, false).unwrap();
+            println!("{w}×{h} first render: {:.2}s", t.elapsed().as_secs_f32());
+            let cases = [
+                (
+                    "PNG original, transparent",
+                    Format::Png,
+                    None,
+                    Background::Transparent,
+                ),
+                (
+                    "JPG original, colour",
+                    Format::Jpg,
+                    None,
+                    Background::Color { color: BLUE },
+                ),
+                (
+                    "WebP original, transparent",
+                    Format::Webp,
+                    None,
+                    Background::Transparent,
+                ),
+                (
+                    "JPG 1080×1350 Fill, blur",
+                    Format::Jpg,
+                    Some((1080, 1350)),
+                    Background::Blur { strength: 40.0 },
+                ),
+                (
+                    "PNG original, blur",
+                    Format::Png,
+                    None,
+                    Background::Blur { strength: 40.0 },
+                ),
+            ];
+            for (label, format, size, background) in cases {
+                let t = Instant::now();
+                let bytes = refiner
+                    .export(
+                        &ip,
+                        &mp,
+                        &edits,
+                        &background,
+                        &settings(format, size, Fit::Fill),
+                    )
+                    .unwrap();
+                println!(
+                    "  {label:<28} {:.2}s ({:.1} MB)",
+                    t.elapsed().as_secs_f32(),
+                    bytes.len() as f64 / 1e6
+                );
+            }
+        }
     }
 
     /// Times edits on a 12-megapixel image: `cargo test --release refine_timings --
