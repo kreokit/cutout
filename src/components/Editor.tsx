@@ -13,6 +13,7 @@ import { Button, IconButton, SectionLabel, Segmented, Tooltip } from "../ui";
 import { BackgroundSection } from "./BackgroundSection";
 import { CutoutCanvas } from "./CutoutCanvas";
 import { CutoutSection, StageStatus } from "./CutoutStatus";
+import { ExportDialog } from "./ExportDialog";
 import { EdgesSection } from "./EdgesSection";
 import { RefineSection } from "./RefineSection";
 import { Stage, StageBrush, ViewMode } from "./Stage";
@@ -32,6 +33,7 @@ export function Editor() {
   const state = useCutouts((s) => (image ? s.byImage[cutoutKey(image.path, model)] : undefined));
   const run = useCutouts((s) => s.run);
   const [mode, setMode] = useState<ViewMode>("after");
+  const [exporting, setExporting] = useState(false);
   const editKey = image ? cutoutKey(image.path, model) : "";
   const history = useEdits((s) => historyOf(s.byImage, editKey));
   const live = useEdits((s) => s.live[editKey]);
@@ -105,7 +107,7 @@ export function Editor() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || !done) return;
-      if ((e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable]")) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable], [role=dialog]")) return;
       const tool = { h: "hand", e: "erase", r: "restore" }[e.key.toLowerCase()] as "hand" | "erase" | "restore" | undefined;
       if (tool && !e.shiftKey) useBrush.getState().setTool(tool);
       else if (e.code === "BracketLeft") useBrush.getState().step(-1, e.shiftKey);
@@ -115,11 +117,24 @@ export function Editor() {
     return () => window.removeEventListener("keydown", onKey);
   }, [done]);
 
+  // ⌘E opens Export.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest("[role=dialog]")) return;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "e" && done) {
+        e.preventDefault();
+        setExporting(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [done]);
+
   // ⌘Z undo, ⇧⌘Z (or Ctrl+Y) redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-      if ((e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable]")) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable], [role=dialog]")) return;
       const key = e.key.toLowerCase();
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -142,7 +157,7 @@ export function Editor() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-      if ((e.target as HTMLElement | null)?.closest("input, textarea, [role=slider]")) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, [role=slider], [role=dialog]")) return;
       show(useSession.getState().current + (e.key === "ArrowLeft" ? -1 : 1));
     };
     window.addEventListener("keydown", onKey);
@@ -208,9 +223,9 @@ export function Editor() {
             onClick={() => redo(editKey)}
           />
         </span>
-        <Tooltip label="Export comes with the cutout in the next alpha">
+        <Tooltip label="Export" shortcut="⌘E">
           <span className="export-slot">
-            <Button variant="primary" icon={Download} disabled>
+            <Button variant="primary" icon={Download} disabled={!done} onClick={() => setExporting(true)}>
               Export
             </Button>
           </span>
@@ -278,6 +293,15 @@ export function Editor() {
           <EdgesSection editKey={editKey} disabled={!done} />
         </aside>
       </div>
+      {exporting && done && (
+        <ExportDialog
+          image={image}
+          model={model}
+          edits={history.edits}
+          background={background}
+          onClose={() => setExporting(false)}
+        />
+      )}
     </div>
   );
 }
