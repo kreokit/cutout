@@ -58,7 +58,9 @@ def load_model() -> torch.nn.Module:
         def forward(self, x):
             return self.m(x)[-1]
 
-    return Final(model)
+    # The wrapper itself must be in eval mode too: torch.onnx.export restores the top
+    # module's mode afterwards, recursively.
+    return Final(model).eval()
 
 
 def register_deform_conv() -> None:
@@ -107,6 +109,7 @@ def export(model: torch.nn.Module, path: Path, size: int, dynamic: bool) -> None
         else None,
         dynamo=False,
     )
+    model.eval()
 
 
 def preprocess(photo: Path, size: int) -> np.ndarray:
