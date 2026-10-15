@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-15):** Milestones 1–4 are done and user-tested. Milestone 5 (Batch + Best model) is built and waiting for the user's test; the guided-filter refinement for Fast was tried and not adopted (see "Batch + Best").
+**Status (2026-10-15):** Milestones 1–5 are done and user-tested. Next: Milestone 6 (Release). The guided-filter refinement for Fast was tried and not adopted (user agreed; see "Batch + Best").
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -87,11 +87,11 @@ Copy the files into this repo for now. A shared package can come later, once the
 ## Batch + Best (milestone 5)
 
 - **Batch grid** (`Batch.tsx`): opening more than one image starts on the grid (`session.view`); tiles show the cutout thumbnail (480 px, cached next to the cutout, `cutout_thumbnail`) or the original's while waiting, the status, Retry, and Best / Edited badges. Click opens the editor; "Back to batch" / Esc returns. Cutouts run one after another as each image's model is downloaded
-- **Model per image:** `useCutouts.modelOf[path]` (falls back to the Home choice); the editor's Background removal section switches Fast / Best per image, and each model keeps its own edits (keys are `model:path`)
+- **Model per image:** `useCutouts.modelOf[path]` (falls back to the Home choice); the editor's Background removal section switches Fast / Best per image, and each model keeps its own edits (keys are `model:path`). After a Fast cutout, a quiet "Better edges for hair → Try Best" button switches the image to Best
 - **Export all** (`BatchExportDialog.tsx`, `batch.rs`): the Export dialog's settings for every image into one folder as `<name>-cutout.<ext>`, each with its own model and edits and the shared background. Missing cutouts are cut out first. **No silent overwrites:** existing files are listed first (Replace / Keep both / Cancel); names repeated in the batch get -2, -3…; without Replace, `export::write_new` hard-links a temporary file into place, which fails if the name exists (so even a file created during the export is kept; the next free name is used). Progress per image, Stop, summary with failures
 - **Best model files** (`models.rs`): `ModelFile` (`u2net`, `birefnet-768`, `birefnet-640`); `CutoutModel::main_file` picks 768 above 9 GB total (8 GB machines report 8.6 GB) and 640 otherwise; `plan()` decides per cutout (run / download the fallback / low memory). `cut_out` returns `done`, `download` or `low-memory`; the UI shows a download card or the "Use Fast / Try anyway" card (stage and batch tiles). Cached results skip the plan
 - **Measuring tools:** `model_memory` (ignored test; each configuration in its own process; `KREOKIT_PROBE_FILE`, `KREOKIT_PROBE_FILES`, `KREOKIT_PROBE_EXTRA`); the model tests take `KREOKIT_MODEL_FILE`
-- **Guided-filter refinement for Fast: tried, not adopted** (2026-10-15, `docs/performance.md`): every setting worsened Fast's masks against the provisional masks, and strong settings smear haze into the background. Code on branch `experiment/guided-filter-fast`. For hair, use Best
+- **Guided-filter refinement for Fast: tried, not adopted** (2026-10-15, `docs/performance.md`): every setting worsened Fast's masks against the provisional masks, and strong settings smear haze into the background. Code kept on branch `experiment/guided-filter-fast` (user: keep it). For hair, use Best
 
 ## Screens (v0.1)
 
@@ -109,7 +109,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 2. ✅ **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
 3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. ✅ **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
-5. **Batch + second model:** multi-image grid, export all; add the Fast/Best choice (built 2026-10-15, waiting for the user's test)
+5. ✅ **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
 6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha
 
 ## Tests (our oracle)
