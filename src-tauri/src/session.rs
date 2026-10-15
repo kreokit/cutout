@@ -967,6 +967,63 @@ mod tests {
         );
     }
 
+    /// A white subject photographed on black, with a soft edge whose pixels mix both: on a
+    /// white background the export shows no dark outline when "Remove dark fringe" is on
+    /// (the edge is composited with the decontaminated colours), at the original size and
+    /// scaled to a preset; with it off, the dark mix shows.
+    #[test]
+    fn exports_composite_the_decontaminated_edge() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-export-fringe");
+        fs::create_dir_all(&dir).unwrap();
+        let (w, h, r, soft) = (400u32, 300u32, 90.0f32, 6.0f32);
+        let alpha = |x: u32, y: u32| {
+            let d = ((x as f32 + 0.5 - 200.0).powi(2) + (y as f32 + 0.5 - 150.0).powi(2)).sqrt();
+            ((r - d) / soft + 0.5).clamp(0.0, 1.0)
+        };
+        let photo = RgbaImage::from_fn(w, h, |x, y| {
+            let v = (alpha(x, y) * 250.0).round() as u8;
+            image::Rgba([v, v, v, 255])
+        });
+        let mask = GrayImage::from_fn(w, h, |x, y| Luma([(alpha(x, y) * 255.0).round() as u8]));
+        let (ip, mp) = (dir.join("photo.png"), dir.join("mask.png"));
+        photo.save(&ip).unwrap();
+        mask.save(&mp).unwrap();
+        let white = Background::Color {
+            color: [255, 255, 255],
+        };
+        for decontaminate in [true, false] {
+            let edits = Edits {
+                edges: EdgeSettings {
+                    feather: 0.0,
+                    shift: 0.0,
+                    decontaminate,
+                },
+                strokes: vec![],
+            };
+            for size in [None, Some((1080, 1080))] {
+                let bytes = Refiner::default()
+                    .export(
+                        &ip,
+                        &mp,
+                        &edits,
+                        &white,
+                        &settings(Format::Png, size, Fit::Fit),
+                    )
+                    .unwrap();
+                let out = image::load_from_memory(&bytes).unwrap().to_rgb8();
+                let darkest = out.pixels().map(|p| p.0[0]).min().unwrap();
+                if decontaminate {
+                    assert!(darkest >= 245, "{size:?}: dark outline ({darkest})");
+                } else {
+                    assert!(
+                        darkest < 210,
+                        "{size:?}: the test scene has no fringe ({darkest})"
+                    );
+                }
+            }
+        }
+    }
+
     /// Times exports of 12- and 48-megapixel images: `cargo test --release export_timings
     /// -- --ignored --nocapture`.
     #[test]
