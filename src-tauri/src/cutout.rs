@@ -628,6 +628,16 @@ mod tests {
             )))
             .unwrap();
         }
+        let peak_gb = peak_memory_gb();
+        println!(
+            "PROBE {}",
+            serde_json::json!({ "load": load, "seconds": seconds, "peak_gb": peak_gb, "input": input })
+        );
+    }
+
+    /// This process's peak memory in GB (Unix only; the measurements run on the dev Mac).
+    #[cfg(unix)]
+    fn peak_memory_gb() -> f64 {
         // SAFETY: getrusage only writes into the struct we pass.
         let peak = unsafe {
             let mut usage: libc::rusage = std::mem::zeroed();
@@ -635,15 +645,16 @@ mod tests {
             usage.ru_maxrss as f64
         };
         // macOS reports bytes, Linux kilobytes.
-        let peak_gb = if cfg!(target_os = "macos") {
+        if cfg!(target_os = "macos") {
             peak / 1e9
         } else {
             peak / 1e6
-        };
-        println!(
-            "PROBE {}",
-            serde_json::json!({ "load": load, "seconds": seconds, "peak_gb": peak_gb, "input": input })
-        );
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn peak_memory_gb() -> f64 {
+        f64::NAN
     }
 
     /// Measures a model under several memory settings, each in its own process: peak

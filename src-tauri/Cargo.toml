@@ -15,7 +15,7 @@ edition = "2024"
 name = "cutout_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 # Peak memory of the model measurements (cutout.rs, ignored tests).
 libc = "0.2"
 
