@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-15):** Milestones 1–5 are done and user-tested. Next: Milestone 6 (Release). The guided-filter refinement for Fast was tried and not adopted (user agreed; see "Batch + Best").
+**Status (2026-10-15):** Milestones 1–5 are done and user-tested. Milestone 6: the draft pre-release `v0.1.0-alpha` is complete (all four builds checked and self-tested) and waiting for the user's test; the user publishes it. The guided-filter refinement for Fast was tried and not adopted (see "Batch + Best").
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -80,7 +80,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 - **Export** (`export.rs`, `session.rs`): every refine edit at **full size** (the working copy's render is reused when it is full size), the cutout scaled premultiplied (no dark fringe), straight-alpha "over" the background, fully transparent pixels cleared (nothing erased stays hidden in the file), written atomically (temp file + rename). Over 16 MP, the last full-size render is kept per edits, so exporting again is quick (48 MP: first export ≈ 8 s, then 1–2 s; WebP encode ≈ 7 s). PNG keeps alpha (RGB when opaque); WebP is lossy with lossless alpha (max 16383 px a side); JPG goes on white when transparent. The original's ICC profile is embedded (ICCP chunk for WebP); EXIF is not copied
 - **Stage:** a colour is CSS; blur (from the 1 MP copy) and image (≤ 4 MP) come from `stage_background`, under the cutout canvas. The Export dialog's preview (`export_preview`, ≤ 0.4 MP) uses the same `export::render`
 - **Export dialog** (⌘E): format, quality 40–100 (WebP/JPG), size, Fit/Fill, preview; settings remembered in localStorage (`store/exportSettings.ts`, sanitized on load); save dialog defaults to `<name>-cutout.<ext>` next to the original; "Show in folder" after saving
-- **macOS 12 binary check:** `check_macos_binary.py` allows exactly one extra weak import, `_dispatch_once_f` from libSystem (user decision, 2026-10-15): it exists since macOS 10.6 and the linker adds it (no crate, C library, Rust std or ONNX Runtime archive references it; also present before libwebp, A/B at 2d51254). Allow nothing else without asking
+- **macOS 12 binary check:** `check_macos_binary.py` allows exactly two extra weak imports from libSystem (user decisions, 2026-10-15): `_dispatch_once_f` (since macOS 10.6; the linker adds it; also present before libwebp, A/B at 2d51254) and `__availability_version_check` (since macOS 11; compiler-rt's OS-version checks import it weakly and check for NULL; the runners' newer SDK adds it to both macOS builds; verified present at runtime on macOS 12.7.6). Allow nothing else without asking
 - **Dark outline on solid colours (checked 2026-10-15):** the export composites edges with the decontaminated colours (test `exports_composite_the_decontaminated_edge`). A dark line that stays is in the photo under a near-opaque mask (e.g. a dark rim U²-Net counts as subject); fixes are Shift −1…−3, Erase, or Best
 - **UI kit:** `ColorPicker` has a saturation/brightness area and hue bar (the only gradients in the kit: they are the colour space), custom `swatches` and `onCommit`. Editor shortcuts ignore keys from inside dialogs and popovers
 
@@ -92,6 +92,13 @@ Copy the files into this repo for now. A shared package can come later, once the
 - **Best model files** (`models.rs`): `ModelFile` (`u2net`, `birefnet-768`, `birefnet-640`); `CutoutModel::main_file` picks 768 above 9 GB total (8 GB machines report 8.6 GB) and 640 otherwise; `plan()` decides per cutout (run / download the fallback / low memory). `cut_out` returns `done`, `download` or `low-memory`; the UI shows a download card or the "Use Fast / Try anyway" card (stage and batch tiles). Cached results skip the plan
 - **Measuring tools:** `model_memory` (ignored test; each configuration in its own process; `KREOKIT_PROBE_FILE`, `KREOKIT_PROBE_FILES`, `KREOKIT_PROBE_EXTRA`); the model tests take `KREOKIT_MODEL_FILE`
 - **Guided-filter refinement for Fast: tried, not adopted** (2026-10-15, `docs/performance.md`): every setting worsened Fast's masks against the provisional masks, and strong settings smear haze into the background. Code kept on branch `experiment/guided-filter-fast` (user: keep it). For hair, use Best
+
+## Release (milestone 6)
+
+- **Workflow** (`release.yml`, manual with a tag or on a `v*` tag push): checks job (tests, cargo-deny, THIRD-PARTY check) → draft pre-release (notes from `docs/release-notes/<tag>.md`) → builds for macOS Apple Silicon (macos-15), macOS Intel (macos-15-intel), Windows x64 (NSIS), Linux x64 (AppImage + .deb, Ubuntu 22.04 / glibc 2.35), `MACOSX_DEPLOYMENT_TARGET=12.0`. Each build: bundle check (all licence files, ad-hoc signature) → `check_macos_binary.py` → **`--self-test`** → upload (`--clobber`). A failed check uploads nothing; re-running the workflow for the same tag replaces the files
+- **`cutout --self-test <image> [--reference <mask>] [--models <dir>]`** (`selftest.rs`, before Tauri starts, no display): downloads Fast and Best 640 if missing (models cached in CI by checksum), cuts out `fixtures/photos/product-mug.jpg` with Fast (IoU ≥ 0.90) and Best 640 (≥ 0.95), runs Best's plan for the machine and for an 8 GB one (must pick 640; Try anyway if memory is short), exports PNG / JPG / WebP / blur and decodes them. On Windows it attaches to the parent console. Results 2026-10-15: Fast 0.985, Best 0.997 on every runner; the Apple Silicon runner (7.5 GB) chose 640 by itself
+- **Licences in the app** (`licenses/`): ONNX Runtime (+ ThirdPartyNotices), libwebp (COPYING, PATENTS), the AI models (`MODEL-U2NET-LICENSE.txt` Apache-2.0, `MODEL-U2NET-ONNX-REMBG-LICENSE.txt` MIT, `MODEL-BIREFNET-LICENSE.txt` MIT), Inter (frontend), and `THIRD-PARTY-LICENSES.md`
+- **macOS 12 check on the dev Mac:** after each release run, download the Intel `.app.tar.gz` from the draft and run `check_macos_binary.py`, the self-test (empty `--models`, so the download runs too) and open the app once. Done for v0.1.0-alpha on macOS 12.7.6
 
 ## Screens (v0.1)
 
@@ -110,7 +117,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. ✅ **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
 5. ✅ **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
-6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha
+6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha (draft complete 2026-10-15, waiting for the user's test)
 
 ## Tests (our oracle)
 
