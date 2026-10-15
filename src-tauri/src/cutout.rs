@@ -600,7 +600,14 @@ mod tests {
         fs::create_dir_all(&out).unwrap();
         let photos: Vec<PathBuf> =
             std::env::split_paths(&std::env::var_os("KREOKIT_PROBE_PHOTOS").unwrap()).collect();
-        let path = model.path_in(&crate::models::tests::dev_models_dir());
+        let dir = crate::models::tests::dev_models_dir();
+        // Fixed-size exports of the model sit next to it as `<stem>_<size>.onnx`.
+        let path = if opts.input_size == spec(model).size {
+            model.path_in(&dir)
+        } else {
+            let stem = model.file_name().trim_end_matches(".onnx");
+            dir.join(format!("{stem}_{}.onnx", opts.input_size))
+        };
 
         let start = Instant::now();
         let mut session = load_session(&path, &opts).unwrap();
@@ -684,7 +691,7 @@ mod tests {
             memory_pattern: false,
             ..base
         };
-        let configs: Vec<(&str, RunOptions)> = vec![
+        let settings_list: Vec<(&str, RunOptions)> = vec![
             ("default (arena, memory pattern, opt 3)", base),
             (
                 "arena off",
@@ -737,11 +744,25 @@ mod tests {
                 },
             ),
         ];
+        // KREOKIT_PROBE_SIZES=1024,768,640: the lean settings at each input size instead.
+        let sizes: Vec<u32> = std::env::var("KREOKIT_PROBE_SIZES")
+            .map(|s| s.split(',').map(|v| v.trim().parse().unwrap()).collect())
+            .unwrap_or_default();
+        let labels: Vec<String> = sizes.iter().map(|s| format!("lean, input {s}")).collect();
+        let configs: Vec<(&str, RunOptions)> = if sizes.is_empty() {
+            settings_list
+        } else {
+            sizes
+                .iter()
+                .zip(&labels)
+                .map(|(&input_size, label)| (label.as_str(), RunOptions { input_size, ..lean }))
+                .collect()
+        };
         let root = std::env::temp_dir().join("kreokit-model-memory");
         let _ = fs::remove_dir_all(&root);
         let exe = std::env::current_exe().unwrap();
         println!(
-            "| Settings | Peak memory | Load | Seconds per image (mean / max) | IoU vs default (min) | IoU vs provisional (mean) |\n|---|---|---|---|---|---|"
+            "| Settings | Peak memory | Load | Seconds per image (mean / max) | IoU vs first row (min / mean) | IoU vs provisional (mean) |\n|---|---|---|---|---|---|"
         );
         for (i, (label, opts)) in configs.iter().enumerate() {
             let out = root.join(i.to_string());
@@ -785,7 +806,8 @@ mod tests {
                 .iter()
                 .map(|v| v.as_f64().unwrap())
                 .collect();
-            let (mut vs_default, mut vs_prov, mut n_prov) = (f64::INFINITY, 0.0, 0);
+            let (mut vs_default, mut vs_default_sum, mut vs_prov, mut n_prov) =
+                (f64::INFINITY, 0.0, 0.0, 0);
             for photo in &photos {
                 let stem = photo.file_stem().unwrap().to_string_lossy().into_owned();
                 let mask = image::open(out.join(format!("{stem}.png")))
@@ -794,7 +816,10 @@ mod tests {
                 let default = image::open(root.join("0").join(format!("{stem}.png")))
                     .unwrap()
                     .to_luma8();
-                vs_default = vs_default.min(iou(&mask, &default));
+                let i = iou(&mask, &default);
+                vs_default = vs_default.min(i);
+                vs_default_sum += i;
+                println!("    {stem}: IoU vs first row {i:.4}");
                 let reference = fixtures.join(format!("masks/{stem}.provisional-mask.png"));
                 if let Ok(reference) = image::open(&reference) {
                     vs_prov += iou(&mask, &reference.to_luma8());
@@ -802,12 +827,13 @@ mod tests {
                 }
             }
             println!(
-                "| {label} | {:.2} GB | {:.1} s | {:.1} / {:.1} s | {:.3} | {:.3} |",
+                "| {label} | {:.2} GB | {:.1} s | {:.1} / {:.1} s | {:.3} / {:.3} | {:.3} |",
                 r["peak_gb"].as_f64().unwrap(),
                 r["load"].as_f64().unwrap(),
                 secs.iter().sum::<f64>() / secs.len() as f64,
                 secs.iter().cloned().fold(0.0, f64::max),
                 vs_default,
+                vs_default_sum / photos.len() as f64,
                 vs_prov / n_prov.max(1) as f64,
             );
         }
