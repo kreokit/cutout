@@ -7,7 +7,8 @@ For every Mach-O file given (for an .app: everything in Contents/MacOS and
 Contents/Frameworks), fails unless:
 - its minimum macOS (LC_BUILD_VERSION / LC_VERSION_MIN_MACOSX `minos`) is at most --min-macos
 - it has no weak-imported symbols (except libc++'s operator new/delete and std exception
-  typeinfo, and libSystem's _dispatch_once_f; see ALLOWED_WEAK) and no weakly linked libraries
+  typeinfo, and libSystem's _dispatch_once_f and __availability_version_check; see
+  ALLOWED_WEAK) and no weakly linked libraries
 
 Why: release builds use a newer SDK than dev builds. A system function that is newer than
 the minimum macOS gets weak-imported, and on an older macOS it resolves to NULL; calling it
@@ -28,9 +29,15 @@ from pathlib import Path
 # The linker adds it as a weak import to Cutout's binary: no crate, C library, Rust std or
 # ONNX Runtime archive references it (checked 2026-10-15, also before libwebp). Only this
 # exact symbol from libSystem is allowed, nothing else from libdispatch.
+# _availability_version_check is what compiler-generated OS-version checks
+# (__builtin_available / @available) call through compiler-rt, which imports it weakly on
+# purpose and checks it for NULL before calling. It exists since macOS 11; verified present
+# at runtime on macOS 12.7.6 (dlsym finds it, in libxpc re-exported by libSystem). The
+# runners' newer SDK adds it to both macOS builds (2026-10-15). Only this exact symbol.
 ALLOWED_WEAK = re.compile(
     r"__Z(nw|na|dl|da)\S* \(from libc\+\+\)|__ZTISt\S* \(from libc\+\+\)"
     r"|_dispatch_once_f \(from libSystem\)"
+    r"|__availability_version_check \(from libSystem\)"
 )
 
 MACHO_MAGICS = {
