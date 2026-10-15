@@ -10,7 +10,9 @@ downloads them from this project's own GitHub releases
 [`models-v1`](https://github.com/kreokit/cutout/releases/tag/models-v1) (Fast) and
 [`models-v2`](https://github.com/kreokit/cutout/releases/tag/models-v2) (Best), where each
 file sits next to its licence and an attribution note, and checks each download against a
-pinned SHA-256 checksum.
+pinned SHA-256 checksum. Their licence texts also ship with the app in `licenses/`:
+`MODEL-U2NET-LICENSE.txt` (Apache-2.0), `MODEL-U2NET-ONNX-REMBG-LICENSE.txt` (MIT) and
+`MODEL-BIREFNET-LICENSE.txt` (MIT).
 
 | Model | Use | Licence | Original source |
 |---|---|---|---|
