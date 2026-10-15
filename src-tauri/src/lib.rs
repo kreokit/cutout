@@ -1,4 +1,5 @@
 mod background;
+mod batch;
 mod cpu;
 mod cutout;
 mod encode;
@@ -29,6 +30,10 @@ use models::{CutoutModel, DownloadProgress, ModelInfo};
 /// Set by `cancel`; checked by model downloads.
 #[derive(Default)]
 struct CancelFlag(Arc<AtomicBool>);
+
+/// Set by `stop_batch`; checked between the images of "Export all".
+#[derive(Default)]
+struct BatchStop(Arc<AtomicBool>);
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -279,6 +284,66 @@ async fn stage_background(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// The files "Export all" of `paths` as `format` to `folder` would replace.
+#[tauri::command]
+async fn batch_conflicts(
+    folder: String,
+    paths: Vec<String>,
+    format: encode::Format,
+) -> Result<Vec<String>, String> {
+    blocking(move || {
+        let images: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        Ok(export::conflicts(Path::new(&folder), &images, format)
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    })
+    .await
+}
+
+/// "Export all": `items` to `folder` with the same background and settings. Without
+/// `replace`, existing files are never touched (new names get -2, -3…).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_batch(
+    app: AppHandle,
+    refiner: State<'_, Arc<session::Refiner>>,
+    stop: State<'_, BatchStop>,
+    items: Vec<batch::BatchItem>,
+    background: background::Background,
+    settings: export::ExportSettings,
+    folder: String,
+    replace: bool,
+    on_progress: Channel<batch::Progress>,
+) -> Result<Vec<batch::ItemResult>, String> {
+    let cache = cache_dir(&app)?;
+    let refiner = refiner.inner().clone();
+    let stop = stop.0.clone();
+    stop.store(false, Ordering::Relaxed);
+    blocking(move || {
+        Ok(batch::export_all(
+            &refiner,
+            &cache,
+            &items,
+            &background,
+            &settings,
+            Path::new(&folder),
+            replace,
+            &stop,
+            |p| {
+                let _ = on_progress.send(p);
+            },
+        ))
+    })
+    .await
+}
+
+/// Stops "Export all" before its next image.
+#[tauri::command]
+fn stop_batch(stop: State<'_, BatchStop>) {
+    stop.0.store(true, Ordering::Relaxed);
+}
+
 /// Shows an exported file in the file manager. Only files with an image extension.
 #[tauri::command]
 fn reveal_export(app: AppHandle, path: String) -> Result<(), String> {
@@ -382,6 +447,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(CancelFlag::default())
+        .manage(BatchStop::default())
         .manage(Arc::new(cutout::Engine::default()))
         .manage(Arc::new(session::Refiner::default()))
         .invoke_handler(tauri::generate_handler![
@@ -396,6 +462,9 @@ pub fn run() {
             export_preview,
             stage_background,
             reveal_export,
+            batch_conflicts,
+            export_batch,
+            stop_batch,
             cancel,
             list_recent,
             remove_recent,

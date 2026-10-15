@@ -4,6 +4,7 @@
 //! The same [`render`] makes the full-size export and the small preview in the Export
 //! dialog; only the sources (full size or a scaled copy) and the output scale differ.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -210,6 +211,104 @@ pub fn write_atomic(dest: &Path, bytes: &[u8]) -> Result<(), String> {
         })
 }
 
+/// What happened when writing without replacing.
+#[derive(Debug, PartialEq)]
+pub enum WriteNew {
+    Written,
+    /// `dest` exists; nothing was written.
+    Exists,
+}
+
+/// Writes `bytes` to `dest` only if no file is there: through a temporary file that is
+/// hard-linked into place, which fails if `dest` exists, so even a file created a moment
+/// ago is never replaced. Where hard links aren't supported (FAT, exFAT), checks first
+/// and renames.
+pub fn write_new(dest: &Path, bytes: &[u8]) -> Result<WriteNew, String> {
+    let name = dest
+        .file_name()
+        .ok_or("the destination has no file name")?
+        .to_string_lossy()
+        .into_owned();
+    let tmp = dest.with_file_name(format!(".{name}.kreokit-tmp"));
+    let failed = |e: std::io::Error| format!("cannot save {name}: {e}");
+    fs::write(&tmp, bytes).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        failed(e)
+    })?;
+    let result = match fs::hard_link(&tmp, dest) {
+        Ok(()) => Ok(WriteNew::Written),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(WriteNew::Exists),
+        Err(_) if dest.exists() => Ok(WriteNew::Exists),
+        Err(_) => fs::rename(&tmp, dest)
+            .map(|_| WriteNew::Written)
+            .map_err(failed),
+    };
+    let _ = fs::remove_file(&tmp);
+    result
+}
+
+/// `<stem>-cutout.<ext>`, or with `-<n>` before the extension.
+fn cutout_name(image: &Path, format: Format, n: u32) -> String {
+    let stem = image
+        .file_stem()
+        .map_or_else(|| "image".into(), |s| s.to_string_lossy().into_owned());
+    match n {
+        1 => format!("{stem}-cutout.{}", format.extension()),
+        n => format!("{stem}-cutout-{n}.{}", format.extension()),
+    }
+}
+
+/// Lower-cased file names in `folder` (macOS and Windows compare names without case).
+fn names_in(folder: &Path) -> HashSet<String> {
+    fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Where each image of a batch export goes in `folder`: `<stem>-cutout.<ext>`, with -2,
+/// -3… for names that repeat within the batch, and (with `keep_existing`) for names that
+/// are already in the folder.
+pub fn batch_destinations(
+    folder: &Path,
+    images: &[PathBuf],
+    format: Format,
+    keep_existing: bool,
+) -> Vec<PathBuf> {
+    let mut taken = if keep_existing {
+        names_in(folder)
+    } else {
+        HashSet::new()
+    };
+    images
+        .iter()
+        .map(|image| {
+            let name = (1..)
+                .map(|n| cutout_name(image, format, n))
+                .find(|name| !taken.contains(&name.to_lowercase()))
+                .unwrap();
+            taken.insert(name.to_lowercase());
+            folder.join(name)
+        })
+        .collect()
+}
+
+/// The files a batch export to `folder` would replace (if the user chooses Replace).
+pub fn conflicts(folder: &Path, images: &[PathBuf], format: Format) -> Vec<PathBuf> {
+    let existing = names_in(folder);
+    batch_destinations(folder, images, format, false)
+        .into_iter()
+        .filter(|d| {
+            d.file_name()
+                .is_some_and(|n| existing.contains(&n.to_string_lossy().to_lowercase()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +367,80 @@ mod tests {
         assert_eq!(fs::read(&dest).unwrap(), b"two");
         assert!(!dir.join(".out.png.kreokit-tmp").exists());
         assert!(write_atomic(&dir.join("missing/out.png"), b"x").is_err());
+    }
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn write_new_never_replaces() {
+        let dir = fresh_dir("kreokit-cutout-write-new");
+        let dest = dir.join("cat-cutout.png");
+        assert_eq!(write_new(&dest, b"first"), Ok(WriteNew::Written));
+        assert_eq!(write_new(&dest, b"second"), Ok(WriteNew::Exists));
+        assert_eq!(fs::read(&dest).unwrap(), b"first");
+        // No temporary files are left behind.
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("cat-cutout.png")]);
+        assert!(write_new(&dir.join("missing/x.png"), b"x").is_err());
+    }
+
+    #[test]
+    fn batch_names_are_unique() {
+        let dir = fresh_dir("kreokit-cutout-batch-names");
+        let images: Vec<PathBuf> = ["/a/cat.jpg", "/b/cat.png", "/c/Cat.jpeg", "/d/dog.jpg"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let names = |dests: Vec<PathBuf>| -> Vec<String> {
+            dests
+                .iter()
+                .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            names(batch_destinations(&dir, &images, Format::Png, true)),
+            [
+                "cat-cutout.png",
+                "cat-cutout-2.png",
+                "Cat-cutout-3.png",
+                "dog-cutout.png"
+            ]
+        );
+        assert!(conflicts(&dir, &images, Format::Png).is_empty());
+
+        // Files already there: Replace would overwrite them; Keep both skips their names.
+        fs::write(dir.join("CAT-cutout.png"), b"old").unwrap();
+        fs::write(dir.join("dog-cutout.png"), b"old").unwrap();
+        fs::write(dir.join("dog-cutout.jpg"), b"other format").unwrap();
+        assert_eq!(
+            names(conflicts(&dir, &images, Format::Png)),
+            ["cat-cutout.png", "dog-cutout.png"]
+        );
+        assert_eq!(
+            names(batch_destinations(&dir, &images, Format::Png, true)),
+            [
+                "cat-cutout-2.png",
+                "cat-cutout-3.png",
+                "Cat-cutout-4.png",
+                "dog-cutout-2.png"
+            ]
+        );
+        assert_eq!(
+            names(batch_destinations(&dir, &images, Format::Png, false)),
+            [
+                "cat-cutout.png",
+                "cat-cutout-2.png",
+                "Cat-cutout-3.png",
+                "dog-cutout.png"
+            ]
+        );
     }
 }
