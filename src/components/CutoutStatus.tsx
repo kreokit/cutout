@@ -1,4 +1,4 @@
-import { Download, MemoryStick, RotateCcw, TriangleAlert } from "lucide-react";
+import { Download, MemoryStick, RotateCcw, Sparkles, TriangleAlert } from "lucide-react";
 import { STAGE_LABELS, formatSeconds } from "../lib/cutout";
 import { formatBytes } from "../lib/images";
 import { CutoutModel, MODEL_HINTS, MODEL_NAMES, ModelFile, percent } from "../lib/models";
@@ -167,6 +167,17 @@ export function CutoutSection({
         <dt>Status</dt>
         <dd>{status}</dd>
       </dl>
+      {model === "fast" && state?.status === "done" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={Sparkles}
+          className="try-best"
+          onClick={() => useCutouts.getState().setModelFor(path, "best")}
+        >
+          Better edges for hair → Try Best
+        </Button>
+      )}
       <p className="ui-field-hint">Each model keeps its own edits for this image.</p>
     </section>
   );
