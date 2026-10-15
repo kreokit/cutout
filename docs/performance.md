@@ -116,3 +116,53 @@ and later exports with the same edits reuse that render.
 
 libwebp's default effort (method 4) makes WebP the slowest encoder at large sizes; the
 dialog shows progress while it runs.
+
+## 2026-10-15: Best model and memory (milestone 5)
+
+Same dev Mac (16 GB). `KREOKIT_MODELS_DIR=<dir> cargo test --release model_memory -- --ignored
+--nocapture`: each row runs in its own process (peak = that process's maximum resident
+memory), on the 7 fixture photos plus a user photo.
+
+**BiRefNet_lite at 1024² (the author's ONNX, `models-v1`)** under ONNX Runtime settings:
+
+| Settings | Peak memory | Seconds per image (mean / max) | IoU vs default (min) |
+|---|---|---|---|
+| Default (arena, memory pattern, opt 3) | 8.16 GB | 26.6 / 51.7 | 1.000 |
+| Arena off | 6.75 GB | 19.7 / 30.3 | 1.000 |
+| Arena + memory pattern off | 5.92 GB | 28.6 / 38.6 | 1.000 |
+| … + no prepacking | 5.86 GB | 32.7 / 87.2 | 1.000 |
+| … + initializers outside the arena | 5.92 GB | 23.0 / 25.4 | 1.000 |
+| … + basic optimisation | 5.98 GB | 24.0 / 26.7 | 1.000 |
+| … + 2 threads | 5.93 GB | 26.3 / 39.8 | 1.000 |
+
+The settings stop at about 5.9 GB: the rest is the network's activations at 1024², and
+that file's input is fixed (`[1, 3, 1024, 1024]`), so it can't run smaller.
+
+**Re-exported at smaller sizes** (`scripts/export_birefnet.py`, GitHub Actions; the
+dynamic-size export matched PyTorch at 1024 but failed at 768 inside the deformable
+convolution's decomposition, so each size is a fixed file), arena and memory pattern off:
+
+| Input | Peak memory | Seconds per image (mean / max) | IoU vs 1024 (min / mean) | IoU vs provisional |
+|---|---|---|---|---|
+| 1024 | 5.86 GB | 31.8 / 50.8 | 1.000 / 1.000 | 0.989 |
+| 768 | 3.44 GB | 13.7 / 15.1 | 0.980 / 0.991 | 0.987 |
+| 640 | 2.47 GB | 9.0 / 13.2 | 0.974 / 0.988 | 0.985 |
+
+(The Mac was swapping during this run, so times are rough.) Chosen with the user: 768 on
+computers with more than 8 GB, 640 on others; 1024 dropped (no visible gain over 768 on
+the user's photo, 2–3× slower). Published in `models-v2`.
+
+**Best 768 on the fixtures** (`KREOKIT_MODEL_FILE=birefnet-768`): synthetic scenes IoU
+0.996–1.000 (logo ring 0.996, where Fast fills the hole: 0.767); photos against the
+provisional masks IoU 0.981–0.998 (`fixtures/photos/baseline-best.json`).
+
+## 2026-10-15: guided-filter edge refinement for Fast (not adopted)
+
+A colour guided filter (He, Sun & Tang; fast variant, edge band only, weighted by local
+contrast) on U²-Net's upscaled mask, swept over radius (2–8× the upscale factor), eps
+(1e-4–1e-2) and the contrast gate. Mean MAE against the provisional masks on the seven
+photos, unrefined: **0.0674**; every setting was worse (0.0676–0.0762). On the user's
+photo, settings strong enough to clear the dark rim along the hair (alpha 184/232/250 →
+112/142/167) smear a haze of hair into the background; gentle settings change nothing
+visible. Best 768 gives the clean edge. The code is on the branch
+`experiment/guided-filter-fast`.
