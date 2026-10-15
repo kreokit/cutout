@@ -7,7 +7,7 @@ For every Mach-O file given (for an .app: everything in Contents/MacOS and
 Contents/Frameworks), fails unless:
 - its minimum macOS (LC_BUILD_VERSION / LC_VERSION_MIN_MACOSX `minos`) is at most --min-macos
 - it has no weak-imported symbols (except libc++'s operator new/delete and std exception
-  typeinfo, see ALLOWED_WEAK) and no weakly linked libraries
+  typeinfo, and libSystem's _dispatch_once_f; see ALLOWED_WEAK) and no weakly linked libraries
 
 Why: release builds use a newer SDK than dev builds. A system function that is newer than
 the minimum macOS gets weak-imported, and on an older macOS it resolves to NULL; calling it
@@ -24,7 +24,14 @@ from pathlib import Path
 
 # libc++'s replaceable operator new/delete and the std exception typeinfo can show up as weak
 # imports (C++ lets programs replace them). Every macOS 12 libc++ has them.
-ALLOWED_WEAK = re.compile(r"__Z(nw|na|dl|da)\S* \(from libc\+\+\)|__ZTISt\S* \(from libc\+\+\)")
+# _dispatch_once_f is in every macOS since 10.6, so it never resolves to NULL on macOS 12.
+# The linker adds it as a weak import to Cutout's binary: no crate, C library, Rust std or
+# ONNX Runtime archive references it (checked 2026-10-15, also before libwebp). Only this
+# exact symbol from libSystem is allowed, nothing else from libdispatch.
+ALLOWED_WEAK = re.compile(
+    r"__Z(nw|na|dl|da)\S* \(from libc\+\+\)|__ZTISt\S* \(from libc\+\+\)"
+    r"|_dispatch_once_f \(from libSystem\)"
+)
 
 MACHO_MAGICS = {
     bytes.fromhex(m)
