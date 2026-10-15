@@ -228,8 +228,11 @@ pub fn result_paths(
 ) -> Result<(PathBuf, PathBuf), String> {
     let dir = cache_dir.join("cutouts");
     let key = images::cache_key(image)?;
-    let id = serde_json::to_value(model).unwrap();
-    let id = id.as_str().unwrap();
+    // "fast2": Fast masks refined at the edges since 2026-10-15; older ones aren't reused.
+    let id = match model {
+        CutoutModel::Fast => "fast2",
+        CutoutModel::Best => "best",
+    };
     Ok((
         dir.join(format!("{key}-{id}.png")),
         dir.join(format!("{key}-{id}-mask.png")),
@@ -377,7 +380,12 @@ pub fn cut_out(
     let small = postprocess(raw, spec);
     drop(outputs);
     let (w, h) = original.dimensions();
-    let mask = imageops::resize(&small, w, h, FilterType::CatmullRom);
+    let mut mask = imageops::resize(&small, w, h, FilterType::CatmullRom);
+    if file == ModelFile::U2net {
+        // U²-Net's 320² mask is coarse: snap its edges to the photo (matting.rs).
+        let settings = crate::matting::GuidedSettings::for_upscale(spec.size, w, h);
+        mask = crate::matting::refine_edges(&rgb, &mask, &settings);
+    }
     let cutout = compose(&original, &mask);
     t.postprocess = secs(step);
 

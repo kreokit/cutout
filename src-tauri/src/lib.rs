@@ -6,6 +6,7 @@ mod encode;
 mod export;
 mod images;
 mod layout;
+mod matting;
 mod memory;
 mod models;
 mod recent;
