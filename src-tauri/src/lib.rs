@@ -5,6 +5,9 @@ mod encode;
 mod export;
 mod images;
 mod layout;
+// Used by the Best model's memory check (next commit).
+#[cfg_attr(not(test), allow(dead_code))]
+mod memory;
 mod models;
 mod recent;
 mod refine;
