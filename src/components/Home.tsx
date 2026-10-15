@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { FolderOpen, ImageIcon, TriangleAlert, Trash2, Upload, Zap, Sparkles } from "lucide-react";
 import { fileName } from "../lib/images";
 import { RecentEntry, listRecent, relativeTime, removeRecent } from "../lib/recent";
+import { MODEL_HINTS } from "../lib/models";
 import { useCutouts } from "../store/cutouts";
 import { openPaths } from "../store/session";
 import { Button, MenuEntry, Segmented, useContextMenu } from "../ui";
@@ -89,8 +90,8 @@ export function Home() {
             value={model}
             onChange={setModel}
             options={[
-              { value: "fast", label: "Fast", icon: Zap, hint: "about 1 s per image" },
-              { value: "best", label: "Best", icon: Sparkles, hint: "coming soon", disabled: true },
+              { value: "fast", label: "Fast", icon: Zap, hint: MODEL_HINTS.fast },
+              { value: "best", label: "Best", icon: Sparkles, hint: MODEL_HINTS.best },
             ]}
           />
         </section>

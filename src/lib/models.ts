@@ -2,8 +2,14 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type CutoutModel = "fast" | "best";
 
+/** A model file on the mirror (models.rs). Best is 768 on computers with more than 8 GB
+ * of memory, 640 on others (and as the fallback when free memory is low). */
+export type ModelFile = "u2net" | "birefnet-768" | "birefnet-640";
+
 export interface ModelInfo {
   id: CutoutModel;
+  /** The file this computer uses for the model. */
+  file: ModelFile;
   size_bytes: number;
   downloaded: boolean;
 }
@@ -18,12 +24,15 @@ export const CANCELLED = "cancelled";
 
 export const MODEL_NAMES: Record<CutoutModel, string> = { fast: "Fast", best: "Best" };
 
+/** Rough time per image on a slow laptop (docs/performance.md). */
+export const MODEL_HINTS: Record<CutoutModel, string> = { fast: "about 1 s per image", best: "10–15 s per image" };
+
 export const listModels = () => invoke<ModelInfo[]>("list_models");
 
-export function downloadModel(model: CutoutModel, onProgress: (p: DownloadProgress) => void) {
+export function downloadModel(file: ModelFile, onProgress: (p: DownloadProgress) => void) {
   const channel = new Channel<DownloadProgress>();
   channel.onmessage = onProgress;
-  return invoke<void>("download_model", { model, onProgress: channel });
+  return invoke<void>("download_model", { file, onProgress: channel });
 }
 
 export const cancelDownload = () => invoke<void>("cancel");

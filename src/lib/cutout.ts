@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { CutoutModel } from "./models";
+import { CutoutModel, ModelFile } from "./models";
 
 export type Stage = "loading_model" | "cutting_out" | "saving";
 
@@ -31,10 +31,17 @@ export const STAGE_LABELS: Record<Stage, string> = {
   saving: "Saving…",
 };
 
-export function cutOut(path: string, model: CutoutModel, onStage: (stage: Stage) => void) {
+/** What `cut_out` did (lib.rs): the result, or why it didn't run yet. */
+export type CutOutcome =
+  | { kind: "done"; result: CutoutResult }
+  | { kind: "download"; file: ModelFile; size_bytes: number }
+  | { kind: "low-memory"; available_bytes: number; needed_bytes: number };
+
+/** Cuts out `path`. Best checks the free memory first; `force` ("Try anyway") skips that. */
+export function cutOut(path: string, model: CutoutModel, onStage: (stage: Stage) => void, force = false) {
   const channel = new Channel<Stage>();
   channel.onmessage = onStage;
-  return invoke<CutoutResult>("cut_out", { path, model, onProgress: channel });
+  return invoke<CutOutcome>("cut_out", { path, model, force, onProgress: channel });
 }
 
 /** "0.8 s", "1.2 s", "14 s". */

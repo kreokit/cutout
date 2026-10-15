@@ -6,8 +6,6 @@ mod encode;
 mod export;
 mod images;
 mod layout;
-// Used by the Best model's memory check (next commit).
-#[cfg_attr(not(test), allow(dead_code))]
 mod memory;
 mod models;
 mod recent;
@@ -25,7 +23,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use images::ImageInfo;
-use models::{CutoutModel, DownloadProgress, ModelInfo};
+use models::{CutoutModel, DownloadProgress, ModelFile, ModelInfo, Plan};
 
 /// Set by `cancel`; checked by model downloads.
 #[derive(Default)]
@@ -90,23 +88,26 @@ async fn open_images(app: AppHandle, paths: Vec<String>) -> Result<Opened, Strin
     Ok(opened)
 }
 
+/// The models with the file this computer uses for each (by its total memory).
 #[tauri::command]
 fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
-    Ok(models::list(&models_dir(&app)?))
+    let total = memory::memory().map(|m| m.total_bytes);
+    Ok(models::list(&models_dir(&app)?, total))
 }
 
+/// Downloads a model file (the model's own, or Best's smaller fallback).
 #[tauri::command]
 async fn download_model(
     app: AppHandle,
     cancel: State<'_, CancelFlag>,
-    model: CutoutModel,
+    file: ModelFile,
     on_progress: Channel<DownloadProgress>,
 ) -> Result<(), String> {
     let dir = models_dir(&app)?;
     let cancel = cancel.0.clone();
     cancel.store(false, Ordering::Relaxed);
     blocking(move || {
-        models::download(model, &dir, &cancel, |p| {
+        models::download(file, &dir, &cancel, |p| {
             let _ = on_progress.send(p);
         })
         .map(|_| ())
@@ -114,48 +115,79 @@ async fn download_model(
     .await
 }
 
-/// Cuts out the image at `path` with `model` (downloaded first via `download_model`) and
-/// lets the webview show the result. Stages go to `on_progress`.
+/// What `cut_out` did: the result, or why it didn't run yet.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum CutOutcome {
+    Done {
+        result: cutout::CutoutResult,
+    },
+    /// Download this file first (Best's first download, or its smaller fallback).
+    Download {
+        file: ModelFile,
+        size_bytes: u64,
+    },
+    /// Not enough free memory for Best: the user picks Use Fast or Try anyway (`force`).
+    LowMemory {
+        available_bytes: u64,
+        needed_bytes: u64,
+    },
+}
+
+/// Cuts out the image at `path` with `model` and lets the webview show the result. Stages
+/// go to `on_progress`. Best first checks the free memory (models::plan); with `force`
+/// ("Try anyway") it runs even when memory is short.
 #[tauri::command]
 async fn cut_out(
     app: AppHandle,
     engine: State<'_, Arc<cutout::Engine>>,
     path: String,
     model: CutoutModel,
+    force: bool,
     on_progress: Channel<cutout::Stage>,
-) -> Result<cutout::CutoutResult, String> {
+) -> Result<CutOutcome, String> {
     let support = cpu::check();
     if !support.supported {
         return Err(cpu::unsupported_message(&support.missing));
     }
     let models = models_dir(&app)?;
-    if !model.is_downloaded(&models) {
-        return Err(format!("the {} model is not downloaded", model.file_name()));
-    }
-    let cache = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("cannot find the cache folder: {e}"))?;
+    let cache = cache_dir(&app)?;
     let engine = engine.inner().clone();
-    let result = blocking(move || {
-        cutout::cut_out(
-            &engine,
-            &model.path_in(&models),
-            &cache,
-            model,
-            Path::new(&path),
-            |stage| {
-                let _ = on_progress.send(stage);
-            },
-        )
+    let outcome = blocking(move || {
+        let image = Path::new(&path);
+        // A result from before needs no model and no memory.
+        if let Some(result) = cutout::cached(&cache, image, model)? {
+            return Ok(CutOutcome::Done { result });
+        }
+        let file = match models::plan(model, &models, memory::memory(), force) {
+            Plan::Run { file } => file,
+            Plan::Download { file, size_bytes } => {
+                return Ok(CutOutcome::Download { file, size_bytes });
+            }
+            Plan::LowMemory {
+                available_bytes,
+                needed_bytes,
+            } => {
+                return Ok(CutOutcome::LowMemory {
+                    available_bytes,
+                    needed_bytes,
+                });
+            }
+        };
+        let result = cutout::cut_out(&engine, &models, &cache, file, image, |stage| {
+            let _ = on_progress.send(stage);
+        })?;
+        Ok(CutOutcome::Done { result })
     })
     .await?;
-    for file in [&result.cutout, &result.mask] {
-        app.asset_protocol_scope()
-            .allow_file(file)
-            .map_err(|e| e.to_string())?;
+    if let CutOutcome::Done { result } = &outcome {
+        for file in [&result.cutout, &result.mask] {
+            app.asset_protocol_scope()
+                .allow_file(file)
+                .map_err(|e| e.to_string())?;
+        }
     }
-    Ok(result)
+    Ok(outcome)
 }
 
 /// Renders the refined cutout of `path` (already cut out with `model`) with `edits`, as

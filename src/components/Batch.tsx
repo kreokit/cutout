@@ -3,7 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Download, RotateCcw, TriangleAlert } from "lucide-react";
 import { STAGE_LABELS } from "../lib/cutout";
-import { ImageInfo, fileName } from "../lib/images";
+import { ImageInfo, fileName, formatBytes } from "../lib/images";
 import { CutoutModel, MODEL_NAMES } from "../lib/models";
 import { DEFAULT_EDGES, Edits } from "../lib/refine";
 import { CutoutState, cutoutKey, isDownloaded, modelFor, useCutouts } from "../store/cutouts";
@@ -45,6 +45,8 @@ function statusText(state: CutoutState | undefined, ready: boolean): string {
   if (!state) return "Waiting";
   if (state.status === "running") return state.stage ? STAGE_LABELS[state.stage] : "Waiting";
   if (state.status === "error") return "Failed";
+  if (state.status === "low-memory") return "Not enough memory";
+  if (state.status === "needs-download") return "Needs a download";
   return "Done";
 }
 
@@ -58,6 +60,7 @@ function Tile({ image, index }: { image: ImageInfo; index: number }) {
   const thumb = useThumbnail(image.path, model, done);
   const running = state?.status === "running";
   const failed = state?.status === "error";
+  const downloading = useCutouts((s) => s.download !== null);
 
   return (
     <li className="batch-tile" data-status={done ? "done" : failed ? "failed" : running ? "running" : "waiting"}>
@@ -86,6 +89,41 @@ function Tile({ image, index }: { image: ImageInfo; index: number }) {
           {model === "best" && <span className="batch-badge">{MODEL_NAMES.best}</span>}
           {edited && <span className="batch-badge">Edited</span>}
         </span>
+        {state?.status === "low-memory" && (
+          <div className="batch-tile-error">
+            <span>Not enough free memory for Best.</span>
+            <Button variant="ghost" size="sm" onClick={() => useCutouts.getState().setModelFor(image.path, "fast")}>
+              Use Fast
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void useCutouts.getState().run(image.path, { retry: true, force: true })}
+            >
+              Try anyway
+            </Button>
+          </div>
+        )}
+        {state?.status === "needs-download" && (
+          <div className="batch-tile-error">
+            <span>Best needs its smaller version ({formatBytes(state.sizeBytes)}).</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={Download}
+              disabled={downloading}
+              onClick={() => {
+                const file = state.file;
+                void useCutouts
+                  .getState()
+                  .startDownload(file)
+                  .then(() => useCutouts.getState().run(image.path, { retry: true }));
+              }}
+            >
+              Download
+            </Button>
+          </div>
+        )}
         {failed && (
           <div className="batch-tile-error">
             <span title={state.error}>{state.error}</span>

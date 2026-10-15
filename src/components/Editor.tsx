@@ -286,7 +286,7 @@ export function Editor() {
             mode={mode}
             size={image}
             brush={stageBrush}
-            status={<StageStatus model={model} state={state} onRetry={() => void run(image.path, { retry: true })} />}
+            status={<StageStatus path={image.path} model={model} state={state} onRetry={() => void run(image.path, { retry: true })} />}
           />
         </div>
         <aside className="inspector" aria-label="Inspector">
@@ -303,7 +303,7 @@ export function Editor() {
               <dd>{formatBytes(image.bytes)}</dd>
             </dl>
           </section>
-          <CutoutSection model={model} state={state} />
+          <CutoutSection path={image.path} model={model} state={state} />
           <BackgroundSection editKey={editKey} disabled={!done} />
           <RefineSection disabled={!done} beforeView={mode === "before"} />
           <EdgesSection editKey={editKey} disabled={!done} />

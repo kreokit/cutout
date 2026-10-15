@@ -22,7 +22,7 @@ use ort::value::Tensor;
 use serde::{Deserialize, Serialize};
 
 use crate::images;
-use crate::models::CutoutModel;
+use crate::models::{CutoutModel, ModelFile};
 
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
@@ -38,15 +38,15 @@ pub struct Spec {
     pub sigmoid: bool,
 }
 
-pub fn spec(model: CutoutModel) -> Spec {
-    match model {
+pub fn spec(file: ModelFile) -> Spec {
+    match file.model() {
         CutoutModel::Fast => Spec {
-            size: 320,
+            size: file.input_size(),
             scale_by_max: true,
             sigmoid: false,
         },
         CutoutModel::Best => Spec {
-            size: 1024,
+            size: file.input_size(),
             scale_by_max: false,
             sigmoid: true,
         },
@@ -72,16 +72,18 @@ pub struct RunOptions {
     pub input_size: u32,
 }
 
-/// The options each model runs with.
-pub fn run_options(model: CutoutModel) -> RunOptions {
+/// The options each model file runs with. Best runs lean (no memory arena, no memory
+/// pattern): 8.2 → 5.9 GB peak at 1024², same masks (docs/performance.md).
+pub fn run_options(file: ModelFile) -> RunOptions {
+    let lean = file.model() == CutoutModel::Best;
     RunOptions {
-        arena: true,
-        memory_pattern: true,
+        arena: !lean,
+        memory_pattern: !lean,
         optimization: 3,
         intra_threads: 0,
         prepacking: true,
         device_allocator_for_initializers: false,
-        input_size: spec(model).size,
+        input_size: file.input_size(),
     }
 }
 
@@ -169,7 +171,7 @@ pub enum Stage {
 /// Keeps the last used model loaded (loading U²-Net takes about a second). One cutout
 /// runs at a time.
 #[derive(Default)]
-pub struct Engine(Mutex<Option<(CutoutModel, Session)>>);
+pub struct Engine(Mutex<Option<(ModelFile, Session)>>);
 
 /// Loads the model at `path` with `opts`.
 pub fn load_session(path: &Path, opts: &RunOptions) -> Result<Session, String> {
@@ -297,14 +299,36 @@ fn save_png(
 
 /// Cuts out the image at `path` with `model` (which must be downloaded), reporting each
 /// stage. Returns the cached result if there is one.
+/// The cached result for `image` with `model`, if it was cut out before.
+pub fn cached(
+    cache_dir: &Path,
+    image: &Path,
+    model: CutoutModel,
+) -> Result<Option<CutoutResult>, String> {
+    let (cutout, mask) = result_paths(cache_dir, image, model)?;
+    Ok((cutout.is_file() && mask.is_file()).then(|| CutoutResult {
+        cutout: cutout.to_string_lossy().into_owned(),
+        mask: mask.to_string_lossy().into_owned(),
+        model,
+        cached: true,
+        timings: Timings::default(),
+    }))
+}
+
+/// Cuts out the image at `path` with the model `file` (in `models_dir`, downloaded),
+/// reporting each stage. Returns the cached result if there is one.
 pub fn cut_out(
     engine: &Engine,
-    model_path: &Path,
+    models_dir: &Path,
     cache_dir: &Path,
-    model: CutoutModel,
+    file: ModelFile,
     path: &Path,
     mut on_stage: impl FnMut(Stage),
 ) -> Result<CutoutResult, String> {
+    let model = file.model();
+    if let Some(done) = cached(cache_dir, path, model)? {
+        return Ok(done);
+    }
     let (cutout_path, mask_path) = result_paths(cache_dir, path, model)?;
     let result = |timings, cached| CutoutResult {
         cutout: cutout_path.to_string_lossy().into_owned(),
@@ -313,18 +337,18 @@ pub fn cut_out(
         cached,
         timings,
     };
-    if cutout_path.is_file() && mask_path.is_file() {
-        return Ok(result(Timings::default(), true));
-    }
 
     let start = Instant::now();
     let mut t = Timings::default();
     let mut slot = engine.0.lock().unwrap_or_else(|e| e.into_inner());
-    if slot.as_ref().is_none_or(|(m, _)| *m != model) {
+    if slot.as_ref().is_none_or(|(f, _)| *f != file) {
         on_stage(Stage::LoadingModel);
         *slot = None; // free the old model first
         let step = Instant::now();
-        *slot = Some((model, load_session(model_path, &run_options(model))?));
+        *slot = Some((
+            file,
+            load_session(&file.path_in(models_dir), &run_options(file))?,
+        ));
         t.load_model = secs(step);
     }
     let session = &mut slot.as_mut().unwrap().1;
@@ -335,10 +359,7 @@ pub fn cut_out(
     t.decode = secs(step);
 
     let step = Instant::now();
-    let spec = Spec {
-        size: run_options(model).input_size,
-        ..spec(model)
-    };
+    let spec = spec(file);
     let rgb = image::DynamicImage::ImageRgba8(original.clone()).to_rgb8();
     let input = Tensor::from_array(preprocess(&rgb, spec)).map_err(|e| e.to_string())?;
     t.preprocess = secs(step);
@@ -434,11 +455,27 @@ mod tests {
         );
     }
 
+    /// The model file the ignored model tests use: `KREOKIT_MODEL_FILE` (u2net,
+    /// birefnet-768, birefnet-640), U²-Net by default.
+    fn test_model_file() -> ModelFile {
+        std::env::var("KREOKIT_MODEL_FILE")
+            .map(|f| serde_json::from_value(serde_json::json!(f)).unwrap())
+            .unwrap_or(ModelFile::U2net)
+    }
+
     #[test]
     fn specs_match_the_models() {
-        assert_eq!(spec(CutoutModel::Fast).size, 320);
-        assert_eq!(spec(CutoutModel::Best).size, 1024);
-        assert!(spec(CutoutModel::Fast).scale_by_max && !spec(CutoutModel::Best).scale_by_max);
+        assert_eq!(spec(ModelFile::U2net).size, 320);
+        assert_eq!(spec(ModelFile::BiRefNet768).size, 768);
+        assert_eq!(spec(ModelFile::BiRefNet640).size, 640);
+        assert!(spec(ModelFile::U2net).scale_by_max && !spec(ModelFile::BiRefNet768).scale_by_max);
+        assert!(spec(ModelFile::BiRefNet640).sigmoid && !spec(ModelFile::U2net).sigmoid);
+        // Best runs lean; Fast keeps ONNX Runtime's defaults.
+        assert!(
+            !run_options(ModelFile::BiRefNet768).arena
+                && !run_options(ModelFile::BiRefNet640).memory_pattern
+        );
+        assert!(run_options(ModelFile::U2net).arena);
     }
 
     #[test]
@@ -505,8 +542,8 @@ mod tests {
     #[ignore]
     fn cuts_out_synthetic_scenes() {
         use crate::synthetic::{iou, mae, scenes};
-        let model = CutoutModel::Fast;
-        let model_path = model.path_in(&crate::models::tests::dev_models_dir());
+        let file = test_model_file();
+        let models = crate::models::tests::dev_models_dir();
         let dir = std::env::temp_dir().join("kreokit-cutout-synthetic");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -519,7 +556,7 @@ mod tests {
         for scene in scenes() {
             let path = dir.join(format!("{}.png", scene.name));
             scene.image.save(&path).unwrap();
-            let result = cut_out(&engine, &model_path, &dir, model, &path, |_| {}).unwrap();
+            let result = cut_out(&engine, &models, &dir, file, &path, |_| {}).unwrap();
             let mask = image::open(&result.mask).unwrap().to_luma8();
             let (iou, mae) = (iou(&mask, &scene.mask), mae(&mask, &scene.mask));
             println!(
@@ -550,10 +587,11 @@ mod tests {
     fn photo_regression() {
         use crate::synthetic::{iou, mae};
         use std::collections::BTreeMap;
-        let model = CutoutModel::Fast;
-        let model_path = model.path_in(&crate::models::tests::dev_models_dir());
+        let file = test_model_file();
+        let models = crate::models::tests::dev_models_dir();
         let fixtures = fixtures_dir();
-        let baseline_path = fixtures.join("baseline-fast.json");
+        let model_id = serde_json::to_value(file.model()).unwrap();
+        let baseline_path = fixtures.join(format!("baseline-{}.json", model_id.as_str().unwrap()));
         let baseline: BTreeMap<String, (f64, f64)> = fs::read_to_string(&baseline_path)
             .ok()
             .and_then(|json| serde_json::from_str(&json).ok())
@@ -581,7 +619,7 @@ mod tests {
             let stem = photo.file_stem().unwrap().to_string_lossy();
             let reference = fixtures.join(format!("masks/{stem}.provisional-mask.png"));
             let reference = image::open(&reference).unwrap().to_luma8();
-            let result = cut_out(&engine, &model_path, &cache, model, photo, |_| {}).unwrap();
+            let result = cut_out(&engine, &models, &cache, file, photo, |_| {}).unwrap();
             let mask = image::open(&result.mask).unwrap().to_luma8();
             let (i, m) = (iou(&mask, &reference), mae(&mask, &reference));
             let (w, h) = mask.dimensions();
@@ -618,8 +656,8 @@ mod tests {
     #[test]
     #[ignore]
     fn timings_12_megapixels() {
-        let model = CutoutModel::Fast;
-        let model_path = model.path_in(&crate::models::tests::dev_models_dir());
+        let file = test_model_file();
+        let models = crate::models::tests::dev_models_dir();
         let dir = std::env::temp_dir().join("kreokit-cutout-12mp");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -633,7 +671,7 @@ mod tests {
         let engine = Engine::default();
         for run in 1..=3 {
             let cache = dir.join(format!("cache-{run}"));
-            let t = cut_out(&engine, &model_path, &cache, model, &big, |_| {})
+            let t = cut_out(&engine, &models, &cache, file, &big, |_| {})
                 .unwrap()
                 .timings;
             println!(
@@ -646,7 +684,7 @@ mod tests {
 
     /// One measuring run (started by [`model_memory`] in its own process, so its peak
     /// memory is its own): cuts out `KREOKIT_PROBE_PHOTOS` (paths separated like `PATH`)
-    /// with `KREOKIT_PROBE_MODEL` and the options in `KREOKIT_PROBE_OPTIONS` (JSON), saves
+    /// with the file `KREOKIT_PROBE_FILE` and the options in `KREOKIT_PROBE_OPTIONS` (JSON), saves
     /// each mask in `KREOKIT_PROBE_OUT` and prints `PROBE {json}`. Does nothing without them.
     #[test]
     #[ignore]
@@ -655,31 +693,21 @@ mod tests {
             return;
         };
         let opts: RunOptions = serde_json::from_str(&options).unwrap();
-        let model: CutoutModel = serde_json::from_value(serde_json::json!(
-            std::env::var("KREOKIT_PROBE_MODEL").unwrap()
+        let file: ModelFile = serde_json::from_value(serde_json::json!(
+            std::env::var("KREOKIT_PROBE_FILE").unwrap()
         ))
         .unwrap();
         let out = PathBuf::from(std::env::var("KREOKIT_PROBE_OUT").unwrap());
         fs::create_dir_all(&out).unwrap();
         let photos: Vec<PathBuf> =
             std::env::split_paths(&std::env::var_os("KREOKIT_PROBE_PHOTOS").unwrap()).collect();
-        let dir = crate::models::tests::dev_models_dir();
-        // Fixed-size exports of the model sit next to it as `<stem>_<size>.onnx`.
-        let path = if opts.input_size == spec(model).size {
-            model.path_in(&dir)
-        } else {
-            let stem = model.file_name().trim_end_matches(".onnx");
-            dir.join(format!("{stem}_{}.onnx", opts.input_size))
-        };
+        let path = file.path_in(&crate::models::tests::dev_models_dir());
 
         let start = Instant::now();
         let mut session = load_session(&path, &opts).unwrap();
         let load = secs(start);
         let input = format!("{:?}", session.inputs[0].input_type);
-        let spec = Spec {
-            size: opts.input_size,
-            ..spec(model)
-        };
+        let spec = spec(file);
         let mut seconds = Vec::new();
         for photo in &photos {
             let original = images::decode(photo).unwrap().to_rgb8();
@@ -729,15 +757,19 @@ mod tests {
 
     /// Measures a model under several memory settings, each in its own process: peak
     /// memory, seconds per image, and IoU of the masks against the default settings' and
-    /// against the provisional masks. `KREOKIT_MODELS_DIR=<dir> KREOKIT_PROBE_MODEL=best
-    /// cargo test --release model_memory -- --ignored --nocapture` (optionally
-    /// `KREOKIT_PROBE_EXTRA=<photo>` adds one more photo, without a reference mask).
+    /// against the provisional masks. `KREOKIT_MODELS_DIR=<dir> KREOKIT_PROBE_FILE=birefnet-768
+    /// cargo test --release model_memory -- --ignored --nocapture`; or
+    /// `KREOKIT_PROBE_FILES=birefnet-768,birefnet-640` compares files with the app's
+    /// settings. `KREOKIT_PROBE_EXTRA=<photo>` adds one more photo (without a reference mask).
     #[test]
     #[ignore]
     fn model_memory() {
         use crate::synthetic::iou;
-        let model = std::env::var("KREOKIT_PROBE_MODEL").unwrap_or_else(|_| "best".into());
-        let model_id: CutoutModel = serde_json::from_value(serde_json::json!(model)).unwrap();
+        let parse = |id: &str| -> ModelFile {
+            serde_json::from_value(serde_json::json!(id.trim())).unwrap()
+        };
+        let file =
+            parse(&std::env::var("KREOKIT_PROBE_FILE").unwrap_or_else(|_| "birefnet-768".into()));
         let fixtures = fixtures_dir();
         let mut photos: Vec<PathBuf> = fs::read_dir(&fixtures)
             .unwrap()
@@ -748,7 +780,11 @@ mod tests {
         if let Ok(extra) = std::env::var("KREOKIT_PROBE_EXTRA") {
             photos.push(PathBuf::from(extra));
         }
-        let base = run_options(model_id);
+        let base = RunOptions {
+            arena: true,
+            memory_pattern: true,
+            ..run_options(file)
+        };
         let lean = RunOptions {
             arena: false,
             memory_pattern: false,
@@ -792,42 +828,32 @@ mod tests {
                     ..lean
                 },
             ),
-            (
-                "… + input 768",
-                RunOptions {
-                    input_size: 768,
-                    ..lean
-                },
-            ),
-            (
-                "… + input 640",
-                RunOptions {
-                    input_size: 640,
-                    ..lean
-                },
-            ),
         ];
-        // KREOKIT_PROBE_SIZES=1024,768,640: the lean settings at each input size instead.
-        let sizes: Vec<u32> = std::env::var("KREOKIT_PROBE_SIZES")
-            .map(|s| s.split(',').map(|v| v.trim().parse().unwrap()).collect())
-            .unwrap_or_default();
-        let labels: Vec<String> = sizes.iter().map(|s| format!("lean, input {s}")).collect();
-        let configs: Vec<(&str, RunOptions)> = if sizes.is_empty() {
-            settings_list
-        } else {
-            sizes
-                .iter()
-                .zip(&labels)
-                .map(|(&input_size, label)| (label.as_str(), RunOptions { input_size, ..lean }))
-                .collect()
-        };
+        let configs: Vec<(String, RunOptions, ModelFile)> =
+            match std::env::var("KREOKIT_PROBE_FILES") {
+                Ok(files) => files
+                    .split(',')
+                    .map(|id| {
+                        let f = parse(id);
+                        (
+                            format!("{} (app settings)", f.file_name()),
+                            run_options(f),
+                            f,
+                        )
+                    })
+                    .collect(),
+                Err(_) => settings_list
+                    .into_iter()
+                    .map(|(label, opts)| (label.to_string(), opts, file))
+                    .collect(),
+            };
         let root = std::env::temp_dir().join("kreokit-model-memory");
         let _ = fs::remove_dir_all(&root);
         let exe = std::env::current_exe().unwrap();
         println!(
             "| Settings | Peak memory | Load | Seconds per image (mean / max) | IoU vs first row (min / mean) | IoU vs provisional (mean) |\n|---|---|---|---|---|---|"
         );
-        for (i, (label, opts)) in configs.iter().enumerate() {
+        for (i, (label, opts, file)) in configs.iter().enumerate() {
             let out = root.join(i.to_string());
             let run = std::process::Command::new(&exe)
                 .args([
@@ -840,7 +866,10 @@ mod tests {
                     "KREOKIT_PROBE_OPTIONS",
                     serde_json::to_string(opts).unwrap(),
                 )
-                .env("KREOKIT_PROBE_MODEL", &model)
+                .env(
+                    "KREOKIT_PROBE_FILE",
+                    serde_json::to_value(file).unwrap().as_str().unwrap(),
+                )
                 .env("KREOKIT_PROBE_OUT", &out)
                 .env(
                     "KREOKIT_PROBE_PHOTOS",

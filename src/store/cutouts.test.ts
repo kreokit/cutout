@@ -26,8 +26,8 @@ const result = (path: string): CutoutResult => ({
 });
 
 const models = (downloaded: boolean): ModelInfo[] => [
-  { id: "fast", size_bytes: 175_997_641, downloaded },
-  { id: "best", size_bytes: 224_005_088, downloaded: false },
+  { id: "fast", file: "u2net", size_bytes: 175_997_641, downloaded },
+  { id: "best", file: "birefnet-768", size_bytes: 205_065_982, downloaded: false },
 ];
 
 describe("cutouts store", () => {
@@ -38,7 +38,7 @@ describe("cutouts store", () => {
   });
 
   it("cuts out each image once and keeps the result", async () => {
-    handlers.cut_out = (args) => result(args.path as string);
+    handlers.cut_out = (args) => ({ kind: "done", result: result(args.path as string) });
     const { run } = useCutouts.getState();
     await Promise.all([run("/a.png"), run("/a.png"), run("/b.png")]);
     expect(calls.filter((c) => c.cmd === "cut_out").map((c) => c.args.path)).toEqual(["/a.png", "/b.png"]);
@@ -57,7 +57,7 @@ describe("cutouts store", () => {
     });
     await useCutouts.getState().run("/a.png");
     expect(calls.filter((c) => c.cmd === "cut_out")).toHaveLength(1);
-    handlers.cut_out = (args) => result(args.path as string);
+    handlers.cut_out = (args) => ({ kind: "done", result: result(args.path as string) });
     await useCutouts.getState().run("/a.png", { retry: true });
     expect(useCutouts.getState().byImage[cutoutKey("/a.png", "fast")].status).toBe("done");
   });
@@ -70,7 +70,7 @@ describe("cutouts store", () => {
     };
     await useCutouts.getState().refreshModels();
     expect(isDownloaded(useCutouts.getState().models, "fast")).toBe(false);
-    await useCutouts.getState().startDownload("fast");
+    await useCutouts.getState().startDownload("u2net");
     expect(isDownloaded(useCutouts.getState().models, "fast")).toBe(true);
     expect(useCutouts.getState().download).toBeNull();
     expect(useCutouts.getState().downloadError).toBeNull();
@@ -80,17 +80,17 @@ describe("cutouts store", () => {
     handlers.download_model = () => {
       throw "model download failed: offline";
     };
-    await useCutouts.getState().startDownload("fast");
+    await useCutouts.getState().startDownload("u2net");
     expect(useCutouts.getState().downloadError).toBe("model download failed: offline");
     handlers.download_model = () => {
       throw "cancelled";
     };
-    await useCutouts.getState().startDownload("fast");
+    await useCutouts.getState().startDownload("u2net");
     expect(useCutouts.getState().downloadError).toBeNull();
   });
 
   it("uses each image's own model", async () => {
-    handlers.cut_out = (args) => result(args.path as string);
+    handlers.cut_out = (args) => ({ kind: "done", result: result(args.path as string) });
     const { run, setModelFor } = useCutouts.getState();
     setModelFor("/b.png", "best");
     expect(modelFor(useCutouts.getState(), "/a.png")).toBe("fast");
@@ -99,5 +99,33 @@ describe("cutouts store", () => {
     await run("/b.png");
     expect(calls.filter((c) => c.cmd === "cut_out").map((c) => c.args.model)).toEqual(["fast", "best"]);
     expect(useCutouts.getState().byImage[cutoutKey("/b.png", "best")]?.status).toBe("done");
+  });
+
+  it("asks before running Best with little memory, and runs it when forced", async () => {
+    useCutouts.getState().setModelFor("/big.png", "best");
+    handlers.cut_out = (args) =>
+      args.force
+        ? { kind: "done", result: result(args.path as string) }
+        : { kind: "low-memory", available_bytes: 2e9, needed_bytes: 3e9 };
+    const key = cutoutKey("/big.png", "best");
+    await useCutouts.getState().run("/big.png");
+    expect(useCutouts.getState().byImage[key]).toEqual({ status: "low-memory", availableBytes: 2e9, neededBytes: 3e9 });
+    // Not again by itself; "Try anyway" retries with force.
+    await useCutouts.getState().run("/big.png");
+    expect(calls.filter((c) => c.cmd === "cut_out")).toHaveLength(1);
+    await useCutouts.getState().run("/big.png", { retry: true, force: true });
+    expect(calls.filter((c) => c.cmd === "cut_out").map((c) => c.args.force)).toEqual([false, true]);
+    expect(useCutouts.getState().byImage[key].status).toBe("done");
+  });
+
+  it("reports a file Best needs first", async () => {
+    useCutouts.getState().setModelFor("/c.png", "best");
+    handlers.cut_out = () => ({ kind: "download", file: "birefnet-640", size_bytes: 197_800_690 });
+    await useCutouts.getState().run("/c.png");
+    expect(useCutouts.getState().byImage[cutoutKey("/c.png", "best")]).toEqual({
+      status: "needs-download",
+      file: "birefnet-640",
+      sizeBytes: 197_800_690,
+    });
   });
 });
