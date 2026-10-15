@@ -19,7 +19,7 @@ use ndarray::Array4;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::images;
 use crate::models::CutoutModel;
@@ -50,6 +50,38 @@ pub fn spec(model: CutoutModel) -> Spec {
             scale_by_max: false,
             sigmoid: true,
         },
+    }
+}
+
+/// How ONNX Runtime runs a model: the memory and thread settings, and the input size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunOptions {
+    /// The CPU memory arena (keeps freed buffers for reuse; faster, more memory).
+    pub arena: bool,
+    /// Plans buffers ahead from the first run (faster, more memory).
+    pub memory_pattern: bool,
+    /// Graph optimisation: 1 basic, 2 extended, 3 all.
+    pub optimization: u8,
+    /// Threads inside an operator; 0 = ONNX Runtime's default.
+    pub intra_threads: usize,
+    /// Pre-packed weights for faster matrix products (extra copies of them).
+    pub prepacking: bool,
+    /// Initializers in plain allocations instead of the arena.
+    pub device_allocator_for_initializers: bool,
+    /// Square input size; the model's own size unless its input is dynamic.
+    pub input_size: u32,
+}
+
+/// The options each model runs with.
+pub fn run_options(model: CutoutModel) -> RunOptions {
+    RunOptions {
+        arena: true,
+        memory_pattern: true,
+        optimization: 3,
+        intra_threads: 0,
+        prepacking: true,
+        device_allocator_for_initializers: false,
+        input_size: spec(model).size,
     }
 }
 
@@ -139,11 +171,47 @@ pub enum Stage {
 #[derive(Default)]
 pub struct Engine(Mutex<Option<(CutoutModel, Session)>>);
 
-fn load_session(path: &Path) -> Result<Session, String> {
-    Session::builder()
-        .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
+/// Loads the model at `path` with `opts`.
+pub fn load_session(path: &Path, opts: &RunOptions) -> Result<Session, String> {
+    use ort::execution_providers::CPUExecutionProvider;
+    let level = match opts.optimization {
+        0 => GraphOptimizationLevel::Disable,
+        1 => GraphOptimizationLevel::Level1,
+        2 => GraphOptimizationLevel::Level2,
+        _ => GraphOptimizationLevel::Level3,
+    };
+    let mut builder = Session::builder()
+        .and_then(|b| {
+            b.with_execution_providers([CPUExecutionProvider::default()
+                .with_arena_allocator(opts.arena)
+                .build()])
+        })
+        .and_then(|b| b.with_optimization_level(level))
+        .and_then(|b| b.with_memory_pattern(opts.memory_pattern))
+        .and_then(|b| b.with_prepacking(opts.prepacking));
+    if opts.intra_threads > 0 {
+        builder = builder.and_then(|b| b.with_intra_threads(opts.intra_threads));
+    }
+    if opts.device_allocator_for_initializers {
+        builder = builder.and_then(|b| b.with_device_allocator_for_initializers());
+    }
+    builder
         .and_then(|b| b.commit_from_file(path))
         .map_err(|e| format!("cannot load the AI model: {e}"))
+}
+
+/// Runs `session` on `rgb` and returns the model-sized mask (`spec.size`²). (The app's
+/// `cut_out` does the same steps, timing each one.)
+#[cfg(test)]
+pub fn infer(session: &mut Session, rgb: &RgbImage, spec: Spec) -> Result<GrayImage, String> {
+    let input = Tensor::from_array(preprocess(rgb, spec)).map_err(|e| e.to_string())?;
+    let outputs = session
+        .run(ort::inputs![input])
+        .map_err(|e| format!("the AI model failed: {e}"))?;
+    let (_, raw) = outputs[0]
+        .try_extract_tensor::<f32>()
+        .map_err(|e| format!("unexpected model output: {e}"))?;
+    Ok(postprocess(raw, spec))
 }
 
 fn secs(since: Instant) -> f32 {
@@ -221,7 +289,7 @@ pub fn cut_out(
         on_stage(Stage::LoadingModel);
         *slot = None; // free the old model first
         let step = Instant::now();
-        *slot = Some((model, load_session(model_path)?));
+        *slot = Some((model, load_session(model_path, &run_options(model))?));
         t.load_model = secs(step);
     }
     let session = &mut slot.as_mut().unwrap().1;
@@ -232,7 +300,10 @@ pub fn cut_out(
     t.decode = secs(step);
 
     let step = Instant::now();
-    let spec = spec(model);
+    let spec = Spec {
+        size: run_options(model).input_size,
+        ..spec(model)
+    };
     let rgb = image::DynamicImage::ImageRgba8(original.clone()).to_rgb8();
     let input = Tensor::from_array(preprocess(&rgb, spec)).map_err(|e| e.to_string())?;
     t.preprocess = secs(step);
@@ -506,6 +577,227 @@ mod tests {
                 "run {run}: load model {:.2}s, decode {:.2}s, preprocess {:.2}s, inference {:.2}s, \
                  postprocess {:.2}s, save {:.2}s, total {:.2}s",
                 t.load_model, t.decode, t.preprocess, t.inference, t.postprocess, t.save, t.total
+            );
+        }
+    }
+
+    /// One measuring run (started by [`model_memory`] in its own process, so its peak
+    /// memory is its own): cuts out `KREOKIT_PROBE_PHOTOS` (paths separated like `PATH`)
+    /// with `KREOKIT_PROBE_MODEL` and the options in `KREOKIT_PROBE_OPTIONS` (JSON), saves
+    /// each mask in `KREOKIT_PROBE_OUT` and prints `PROBE {json}`. Does nothing without them.
+    #[test]
+    #[ignore]
+    fn model_memory_run() {
+        let Ok(options) = std::env::var("KREOKIT_PROBE_OPTIONS") else {
+            return;
+        };
+        let opts: RunOptions = serde_json::from_str(&options).unwrap();
+        let model: CutoutModel = serde_json::from_value(serde_json::json!(
+            std::env::var("KREOKIT_PROBE_MODEL").unwrap()
+        ))
+        .unwrap();
+        let out = PathBuf::from(std::env::var("KREOKIT_PROBE_OUT").unwrap());
+        fs::create_dir_all(&out).unwrap();
+        let photos: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("KREOKIT_PROBE_PHOTOS").unwrap()).collect();
+        let path = model.path_in(&crate::models::tests::dev_models_dir());
+
+        let start = Instant::now();
+        let mut session = load_session(&path, &opts).unwrap();
+        let load = secs(start);
+        let input = format!("{:?}", session.inputs[0].input_type);
+        let spec = Spec {
+            size: opts.input_size,
+            ..spec(model)
+        };
+        let mut seconds = Vec::new();
+        for photo in &photos {
+            let original = images::decode(photo).unwrap().to_rgb8();
+            let step = Instant::now();
+            let small = infer(&mut session, &original, spec).unwrap();
+            seconds.push(secs(step));
+            let mask = imageops::resize(
+                &small,
+                original.width(),
+                original.height(),
+                FilterType::CatmullRom,
+            );
+            mask.save(out.join(format!(
+                "{}.png",
+                photo.file_stem().unwrap().to_string_lossy()
+            )))
+            .unwrap();
+        }
+        // SAFETY: getrusage only writes into the struct we pass.
+        let peak = unsafe {
+            let mut usage: libc::rusage = std::mem::zeroed();
+            libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+            usage.ru_maxrss as f64
+        };
+        // macOS reports bytes, Linux kilobytes.
+        let peak_gb = if cfg!(target_os = "macos") {
+            peak / 1e9
+        } else {
+            peak / 1e6
+        };
+        println!(
+            "PROBE {}",
+            serde_json::json!({ "load": load, "seconds": seconds, "peak_gb": peak_gb, "input": input })
+        );
+    }
+
+    /// Measures a model under several memory settings, each in its own process: peak
+    /// memory, seconds per image, and IoU of the masks against the default settings' and
+    /// against the provisional masks. `KREOKIT_MODELS_DIR=<dir> KREOKIT_PROBE_MODEL=best
+    /// cargo test --release model_memory -- --ignored --nocapture` (optionally
+    /// `KREOKIT_PROBE_EXTRA=<photo>` adds one more photo, without a reference mask).
+    #[test]
+    #[ignore]
+    fn model_memory() {
+        use crate::synthetic::iou;
+        let model = std::env::var("KREOKIT_PROBE_MODEL").unwrap_or_else(|_| "best".into());
+        let model_id: CutoutModel = serde_json::from_value(serde_json::json!(model)).unwrap();
+        let fixtures = fixtures_dir();
+        let mut photos: Vec<PathBuf> = fs::read_dir(&fixtures)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| images::has_image_extension(p))
+            .collect();
+        photos.sort();
+        if let Ok(extra) = std::env::var("KREOKIT_PROBE_EXTRA") {
+            photos.push(PathBuf::from(extra));
+        }
+        let base = run_options(model_id);
+        let lean = RunOptions {
+            arena: false,
+            memory_pattern: false,
+            ..base
+        };
+        let configs: Vec<(&str, RunOptions)> = vec![
+            ("default (arena, memory pattern, opt 3)", base),
+            (
+                "arena off",
+                RunOptions {
+                    arena: false,
+                    ..base
+                },
+            ),
+            ("arena + memory pattern off", lean),
+            (
+                "… + no prepacking",
+                RunOptions {
+                    prepacking: false,
+                    ..lean
+                },
+            ),
+            (
+                "… + initializers outside the arena",
+                RunOptions {
+                    device_allocator_for_initializers: true,
+                    ..lean
+                },
+            ),
+            (
+                "… + basic optimisation (1)",
+                RunOptions {
+                    optimization: 1,
+                    ..lean
+                },
+            ),
+            (
+                "… + 2 threads",
+                RunOptions {
+                    intra_threads: 2,
+                    ..lean
+                },
+            ),
+            (
+                "… + input 768",
+                RunOptions {
+                    input_size: 768,
+                    ..lean
+                },
+            ),
+            (
+                "… + input 640",
+                RunOptions {
+                    input_size: 640,
+                    ..lean
+                },
+            ),
+        ];
+        let root = std::env::temp_dir().join("kreokit-model-memory");
+        let _ = fs::remove_dir_all(&root);
+        let exe = std::env::current_exe().unwrap();
+        println!(
+            "| Settings | Peak memory | Load | Seconds per image (mean / max) | IoU vs default (min) | IoU vs provisional (mean) |\n|---|---|---|---|---|---|"
+        );
+        for (i, (label, opts)) in configs.iter().enumerate() {
+            let out = root.join(i.to_string());
+            let run = std::process::Command::new(&exe)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "cutout::tests::model_memory_run",
+                    "--nocapture",
+                ])
+                .env(
+                    "KREOKIT_PROBE_OPTIONS",
+                    serde_json::to_string(opts).unwrap(),
+                )
+                .env("KREOKIT_PROBE_MODEL", &model)
+                .env("KREOKIT_PROBE_OUT", &out)
+                .env(
+                    "KREOKIT_PROBE_PHOTOS",
+                    std::env::join_paths(&photos).unwrap(),
+                )
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let Some(line) = stdout.lines().find_map(|l| l.strip_prefix("PROBE ")) else {
+                let err = String::from_utf8_lossy(&run.stderr);
+                let reason = err
+                    .lines()
+                    .chain(stdout.lines())
+                    .find(|l| l.contains("panicked") || l.contains("failed"))
+                    .unwrap_or("no result");
+                println!("| {label} | failed: {reason} | | | | |");
+                continue;
+            };
+            let r: serde_json::Value = serde_json::from_str(line).unwrap();
+            if i == 0 {
+                println!("(model input: {})", r["input"]);
+            }
+            let secs: Vec<f64> = r["seconds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap())
+                .collect();
+            let (mut vs_default, mut vs_prov, mut n_prov) = (f64::INFINITY, 0.0, 0);
+            for photo in &photos {
+                let stem = photo.file_stem().unwrap().to_string_lossy().into_owned();
+                let mask = image::open(out.join(format!("{stem}.png")))
+                    .unwrap()
+                    .to_luma8();
+                let default = image::open(root.join("0").join(format!("{stem}.png")))
+                    .unwrap()
+                    .to_luma8();
+                vs_default = vs_default.min(iou(&mask, &default));
+                let reference = fixtures.join(format!("masks/{stem}.provisional-mask.png"));
+                if let Ok(reference) = image::open(&reference) {
+                    vs_prov += iou(&mask, &reference.to_luma8());
+                    n_prov += 1;
+                }
+            }
+            println!(
+                "| {label} | {:.2} GB | {:.1} s | {:.1} / {:.1} s | {:.3} | {:.3} |",
+                r["peak_gb"].as_f64().unwrap(),
+                r["load"].as_f64().unwrap(),
+                secs.iter().sum::<f64>() / secs.len() as f64,
+                secs.iter().cloned().fold(0.0, f64::max),
+                vs_default,
+                vs_prov / n_prov.max(1) as f64,
             );
         }
     }

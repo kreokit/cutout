@@ -684,6 +684,7 @@ name = "cutout"
 version = "0.1.0"
 dependencies = [
  "image",
+ "libc",
  "libwebp-sys",
  "ndarray",
  "ort",
