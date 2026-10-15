@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-15):** Milestones 1–5 are done and user-tested. Milestone 6: the draft pre-release `v0.1.0-alpha` is complete (all four builds checked and self-tested) and waiting for the user's test; the user publishes it. The guided-filter refinement for Fast was tried and not adopted (see "Batch + Best").
+**Status (2026-10-15):** Milestones 1–6 are done. v0.1.0-alpha is published as a pre-release (not "latest"; tag at 555c03b, the commit the files were built from): <https://github.com/kreokit/cutout/releases/tag/v0.1.0-alpha>. README and the org profile link to it. Next work comes from the backlog and tester feedback (issues). GitHub's "latest" release is the model mirror `models-v2`, so never link `/releases/latest` for the app.
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -117,7 +117,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
 4. ✅ **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
 5. ✅ **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
-6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha (draft complete 2026-10-15, waiting for the user's test)
+6. ✅ **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, pre-release v0.1.0-alpha (published 2026-10-15)
 
 ## Tests (our oracle)
 
