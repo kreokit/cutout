@@ -1,16 +1,23 @@
 import { Download, RotateCcw, TriangleAlert } from "lucide-react";
 import { STAGE_LABELS, formatSeconds } from "../lib/cutout";
 import { formatBytes } from "../lib/images";
-import { MODEL_NAMES, percent } from "../lib/models";
+import { CutoutModel, MODEL_NAMES, percent } from "../lib/models";
 import { CutoutState, isDownloaded, useCutouts } from "../store/cutouts";
 import { Button, ProgressBar, SectionLabel } from "../ui";
 
 /** On the stage: what's happening with the cutout (download, progress, error). */
-export function StageStatus({ state, onRetry }: { state: CutoutState | undefined; onRetry: () => void }) {
-  const model = useCutouts((s) => s.model);
+export function StageStatus({
+  model,
+  state,
+  onRetry,
+}: {
+  model: CutoutModel;
+  state: CutoutState | undefined;
+  onRetry: () => void;
+}) {
   const models = useCutouts((s) => s.models);
   if (models === null) return null;
-  if (!isDownloaded(models, model)) return <DownloadCard />;
+  if (!isDownloaded(models, model)) return <DownloadCard model={model} />;
   if (state?.status === "running") {
     return (
       <div className="stage-status" role="status">
@@ -35,8 +42,7 @@ export function StageStatus({ state, onRetry }: { state: CutoutState | undefined
 }
 
 /** Asks for the one-time model download, then shows its progress. */
-function DownloadCard() {
-  const model = useCutouts((s) => s.model);
+export function DownloadCard({ model }: { model: CutoutModel }) {
   const info = useCutouts((s) => s.models?.find((m) => m.id === model));
   const download = useCutouts((s) => s.download);
   const error = useCutouts((s) => s.downloadError);
@@ -74,8 +80,7 @@ function DownloadCard() {
 }
 
 /** Inspector section: which model, and how long the cutout took. */
-export function CutoutSection({ state }: { state: CutoutState | undefined }) {
-  const model = useCutouts((s) => s.model);
+export function CutoutSection({ model, state }: { model: CutoutModel; state: CutoutState | undefined }) {
   const ready = useCutouts((s) => isDownloaded(s.models, model));
   let status = "Not downloaded yet";
   if (ready) {

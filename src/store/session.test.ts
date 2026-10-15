@@ -39,4 +39,20 @@ describe("openPaths", () => {
     useSession.getState().show(-1);
     expect(useSession.getState().current).toBe(0);
   });
+
+  it("starts a batch on the grid and one image in the editor", async () => {
+    opened.value = { images: [image("/a.png"), image("/b.png"), image("/c.png")], errors: [] };
+    await openPaths(["/a.png", "/b.png", "/c.png"]);
+    expect(useSession.getState().view).toBe("grid");
+    useSession.getState().edit(2);
+    expect(useSession.getState()).toMatchObject({ view: "editor", current: 2 });
+    useSession.getState().toGrid();
+    expect(useSession.getState().view).toBe("grid");
+
+    opened.value = { images: [image("/one.png")], errors: [] };
+    await openPaths(["/one.png"]);
+    expect(useSession.getState().view).toBe("editor");
+    useSession.getState().toGrid(); // no grid for a single image
+    expect(useSession.getState().view).toBe("editor");
+  });
 });

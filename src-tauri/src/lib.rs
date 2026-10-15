@@ -284,6 +284,32 @@ async fn stage_background(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// The cached thumbnail of the image at `path` (opened before), for the batch grid.
+#[tauri::command]
+async fn image_thumbnail(app: AppHandle, path: String) -> Result<String, String> {
+    let dir = data_dir(&app)?;
+    let thumb = blocking(move || images::thumbnail(&dir, Path::new(&path))).await?;
+    app.asset_protocol_scope()
+        .allow_file(&thumb)
+        .map_err(|e| e.to_string())?;
+    Ok(thumb.to_string_lossy().into_owned())
+}
+
+/// The cached thumbnail of the cutout of `path` with `model` (a PNG with alpha).
+#[tauri::command]
+async fn cutout_thumbnail(
+    app: AppHandle,
+    path: String,
+    model: CutoutModel,
+) -> Result<String, String> {
+    let cache = cache_dir(&app)?;
+    let thumb = blocking(move || cutout::cutout_thumbnail(&cache, Path::new(&path), model)).await?;
+    app.asset_protocol_scope()
+        .allow_file(&thumb)
+        .map_err(|e| e.to_string())?;
+    Ok(thumb.to_string_lossy().into_owned())
+}
+
 /// The files "Export all" of `paths` as `format` to `folder` would replace.
 #[tauri::command]
 async fn batch_conflicts(
@@ -463,6 +489,8 @@ pub fn run() {
             stage_background,
             reveal_export,
             batch_conflicts,
+            image_thumbnail,
+            cutout_thumbnail,
             export_batch,
             stop_batch,
             cancel,

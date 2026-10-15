@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Batch } from "./components/Batch";
 import { CpuCheck } from "./components/CpuCheck";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
@@ -10,6 +11,7 @@ import { ToastRegion } from "./ui";
 
 function App() {
   const hasImages = useSession((s) => s.images.length > 0);
+  const view = useSession((s) => s.view);
 
   useEffect(() => {
     void useCutouts.getState().refreshModels();
@@ -35,7 +37,7 @@ function App() {
 
   return (
     <>
-      {hasImages ? <Editor /> : <Home />}
+      {!hasImages ? <Home /> : view === "grid" ? <Batch /> : <Editor />}
       <ToastRegion />
       <CpuCheck />
     </>

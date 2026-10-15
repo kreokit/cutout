@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-const { useCutouts, cutoutKey, isDownloaded } = await import("./cutouts");
+const { useCutouts, cutoutKey, isDownloaded, modelFor } = await import("./cutouts");
 
 const result = (path: string): CutoutResult => ({
   cutout: `${path}.cut.png`,
@@ -34,7 +34,7 @@ describe("cutouts store", () => {
   beforeEach(() => {
     calls.length = 0;
     for (const k of Object.keys(handlers)) delete handlers[k];
-    useCutouts.setState({ model: "fast", models: null, download: null, downloadError: null, byImage: {} });
+    useCutouts.setState({ model: "fast", modelOf: {}, models: null, download: null, downloadError: null, byImage: {} });
   });
 
   it("cuts out each image once and keeps the result", async () => {
@@ -87,5 +87,17 @@ describe("cutouts store", () => {
     };
     await useCutouts.getState().startDownload("fast");
     expect(useCutouts.getState().downloadError).toBeNull();
+  });
+
+  it("uses each image's own model", async () => {
+    handlers.cut_out = (args) => result(args.path as string);
+    const { run, setModelFor } = useCutouts.getState();
+    setModelFor("/b.png", "best");
+    expect(modelFor(useCutouts.getState(), "/a.png")).toBe("fast");
+    expect(modelFor(useCutouts.getState(), "/b.png")).toBe("best");
+    await run("/a.png");
+    await run("/b.png");
+    expect(calls.filter((c) => c.cmd === "cut_out").map((c) => c.args.model)).toEqual(["fast", "best"]);
+    expect(useCutouts.getState().byImage[cutoutKey("/b.png", "best")]?.status).toBe("done");
   });
 });

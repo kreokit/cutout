@@ -234,6 +234,41 @@ pub fn result_paths(
     ))
 }
 
+/// Longest side of a cutout thumbnail (the batch grid), in pixels.
+const THUMBNAIL_SIZE: u32 = 480;
+
+/// The cached thumbnail of the cutout of `image` with `model`: a PNG with alpha, longest
+/// side 480 px, made from the cached cutout on first use (and again if the cutout is newer).
+pub fn cutout_thumbnail(
+    cache_dir: &Path,
+    image: &Path,
+    model: CutoutModel,
+) -> Result<PathBuf, String> {
+    let (cutout, _) = result_paths(cache_dir, image, model)?;
+    let thumb = cutout.with_extension("thumb.png");
+    let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    let cutout_time = modified(&cutout).ok_or("this image is not cut out yet")?;
+    if modified(&thumb).is_some_and(|t| t >= cutout_time) {
+        return Ok(thumb);
+    }
+    let mut img = image::open(&cutout)
+        .map_err(|e| format!("cannot read the cutout: {e}"))?
+        .to_rgba8();
+    if img.width().max(img.height()) > THUMBNAIL_SIZE {
+        img = image::DynamicImage::ImageRgba8(img)
+            .thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+            .to_rgba8();
+    }
+    save_png(
+        &thumb,
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(thumb)
+}
+
 /// Saves a PNG via a temporary file, so a crash never leaves half a file in the cache.
 fn save_png(
     path: &Path,
@@ -370,6 +405,34 @@ mod tests {
         scale_by_max: true,
         sigmoid: false,
     };
+
+    #[test]
+    fn cutout_thumbnails_are_small_and_cached() {
+        let dir = std::env::temp_dir().join("kreokit-cutout-thumbs");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let image = dir.join("photo.png");
+        RgbImage::from_pixel(1200, 600, Rgb([1, 2, 3]))
+            .save(&image)
+            .unwrap();
+        assert!(
+            cutout_thumbnail(&dir, &image, CutoutModel::Fast).is_err(),
+            "not cut out yet"
+        );
+        let (cutout, _) = result_paths(&dir, &image, CutoutModel::Fast).unwrap();
+        fs::create_dir_all(cutout.parent().unwrap()).unwrap();
+        RgbaImage::from_pixel(1200, 600, Rgba([9, 9, 9, 100]))
+            .save(&cutout)
+            .unwrap();
+        let thumb = cutout_thumbnail(&dir, &image, CutoutModel::Fast).unwrap();
+        let t = image::open(&thumb).unwrap();
+        assert_eq!((t.width(), t.height()), (480, 240));
+        assert_eq!(t.to_rgba8().get_pixel(10, 10).0[3], 100, "keeps the alpha");
+        assert_eq!(
+            cutout_thumbnail(&dir, &image, CutoutModel::Fast).unwrap(),
+            thumb
+        );
+    }
 
     #[test]
     fn specs_match_the_models() {

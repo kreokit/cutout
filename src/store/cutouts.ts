@@ -18,6 +18,8 @@ export type CutoutState =
 interface Cutouts {
   /** The model new cutouts use (picked on Home). */
   model: CutoutModel;
+  /** The model chosen for one image (in the editor); others use `model`. */
+  modelOf: Record<string, CutoutModel>;
   /** Model files and whether they're downloaded; null until loaded. */
   models: ModelInfo[] | null;
   download: { model: CutoutModel; progress: DownloadProgress | null } | null;
@@ -25,14 +27,19 @@ interface Cutouts {
   /** Cutouts by `cutoutKey(path, model)`. */
   byImage: Record<string, CutoutState>;
   setModel: (model: CutoutModel) => void;
+  /** Chooses the model for the image at `path` only. */
+  setModelFor: (path: string, model: CutoutModel) => void;
   refreshModels: () => Promise<void>;
   startDownload: (model: CutoutModel) => Promise<void>;
   cancelDownload: () => void;
-  /** Cuts out `path` with the current model unless it's done or running. */
+  /** Cuts out `path` with its model unless it's done or running. */
   run: (path: string, opts?: { retry?: boolean }) => Promise<void>;
 }
 
 export const cutoutKey = (path: string, model: CutoutModel) => `${model}:${path}`;
+
+/** The model the image at `path` uses. */
+export const modelFor = (s: Pick<Cutouts, "model" | "modelOf">, path: string) => s.modelOf[path] ?? s.model;
 
 export const isDownloaded = (models: ModelInfo[] | null, model: CutoutModel) =>
   models?.some((m) => m.id === model && m.downloaded) ?? false;
@@ -46,12 +53,15 @@ export const useCutouts = create<Cutouts>((set, get) => {
 
   return {
     model: "fast",
+    modelOf: {},
     models: null,
     download: null,
     downloadError: null,
     byImage: {},
 
     setModel: (model) => set({ model }),
+
+    setModelFor: (path, model) => set((s) => ({ modelOf: { ...s.modelOf, [path]: model } })),
 
     refreshModels: async () => {
       set({ models: await listModels() });
@@ -73,7 +83,7 @@ export const useCutouts = create<Cutouts>((set, get) => {
     cancelDownload: () => void cancelDownload(),
 
     run: (path, opts) => {
-      const { model } = get();
+      const model = modelFor(get(), path);
       const key = cutoutKey(path, model);
       const current = get().byImage[key];
       if (current && (current.status !== "error" || !opts?.retry)) return Promise.resolve();

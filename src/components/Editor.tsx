@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ChevronLeft, ChevronRight, Download, Redo2, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, LayoutGrid, Redo2, Undo2 } from "lucide-react";
 import { fileName, formatBytes } from "../lib/images";
 import { LivePainter } from "../lib/paint";
 import { Render, Stroke, closeRefine, workingOriginal } from "../lib/refine";
-import { cutoutKey, isDownloaded, useCutouts } from "../store/cutouts";
+import { cutoutKey, isDownloaded, modelFor, useCutouts } from "../store/cutouts";
 import { useBrush } from "../store/brush";
 import { canRedo, canUndo, historyOf, useEdits } from "../store/edits";
 import { openPaths, useSession } from "../store/session";
@@ -27,8 +27,9 @@ export function Editor() {
   const current = useSession((s) => s.current);
   const show = useSession((s) => s.show);
   const close = useSession((s) => s.close);
+  const toGrid = useSession((s) => s.toGrid);
   const image = images[current];
-  const model = useCutouts((s) => s.model);
+  const model = useCutouts((s) => (image ? modelFor(s, image.path) : s.model));
   const ready = useCutouts((s) => isDownloaded(s.models, model));
   const state = useCutouts((s) => (image ? s.byImage[cutoutKey(image.path, model)] : undefined));
   const run = useCutouts((s) => s.run);
@@ -117,6 +118,18 @@ export function Editor() {
     return () => window.removeEventListener("keydown", onKey);
   }, [done]);
 
+  // Escape goes back to the batch grid.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || images.length < 2) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, [role=dialog], [role=listbox]")) return;
+      if (document.querySelector("[role=dialog]")) return;
+      toGrid();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [images.length, toGrid]);
+
   // ⌘E opens Export.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -186,6 +199,9 @@ export function Editor() {
         }}
         title={
           <>
+            {images.length > 1 && (
+              <IconButton label="Back to batch" shortcut="Esc" icon={LayoutGrid} size="sm" onClick={toGrid} />
+            )}
             <span className="topbar-name" title={image.path} data-tauri-drag-region>
               {name}
             </span>
@@ -270,7 +286,7 @@ export function Editor() {
             mode={mode}
             size={image}
             brush={stageBrush}
-            status={<StageStatus state={state} onRetry={() => void run(image.path, { retry: true })} />}
+            status={<StageStatus model={model} state={state} onRetry={() => void run(image.path, { retry: true })} />}
           />
         </div>
         <aside className="inspector" aria-label="Inspector">
@@ -287,7 +303,7 @@ export function Editor() {
               <dd>{formatBytes(image.bytes)}</dd>
             </dl>
           </section>
-          <CutoutSection state={state} />
+          <CutoutSection model={model} state={state} />
           <BackgroundSection editKey={editKey} disabled={!done} />
           <RefineSection disabled={!done} beforeView={mode === "before"} />
           <EdgesSection editKey={editKey} disabled={!done} />
