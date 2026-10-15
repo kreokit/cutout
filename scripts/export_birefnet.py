@@ -20,6 +20,7 @@ Writes <out>/*.onnx, <out>/SHA256SUMS, <out>/report.json and <out>/report.md.
 """
 
 import argparse
+import gc
 import hashlib
 import json
 import sys
@@ -129,9 +130,17 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.logical_and(a, b).sum() / union) if union else 1.0
 
 
+def session(path: Path) -> ort.InferenceSession:
+    """Lean settings (as the app will use), so checks fit in the runner's memory."""
+    options = ort.SessionOptions()
+    options.enable_cpu_mem_arena = False
+    options.enable_mem_pattern = False
+    return ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+
+
 def check(model, path: Path, sizes: list[int], photos: list[Path]) -> dict:
     """ONNX Runtime vs PyTorch at each size; raises if any size fails."""
-    session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    session_ = session(path)
     results = {}
     for size in sizes:
         diffs, ious = [], []
@@ -139,7 +148,7 @@ def check(model, path: Path, sizes: list[int], photos: list[Path]) -> dict:
             x = preprocess(photo, size)
             with torch.no_grad():
                 want = sigmoid(model(torch.from_numpy(x)).numpy())
-            got = sigmoid(session.run(None, {session.get_inputs()[0].name: x})[0])
+            got = sigmoid(session_.run(None, {session_.get_inputs()[0].name: x})[0])
             if got.shape != want.shape:
                 raise AssertionError(f"{size}: output {got.shape}, PyTorch {want.shape}")
             diffs.append(float(np.abs(got - want).mean()))
@@ -153,8 +162,8 @@ def check(model, path: Path, sizes: list[int], photos: list[Path]) -> dict:
 
 def against_reference(path: Path, reference: Path, photos: list[Path]) -> float:
     """IoU of a new file at 1024 against the models-v1 file (same weights, same size)."""
-    new = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-    old = ort.InferenceSession(str(reference), providers=["CPUExecutionProvider"])
+    new = session(path)
+    old = session(reference)
     worst = 1.0
     for photo in photos:
         x = preprocess(photo, 1024)
@@ -198,6 +207,10 @@ def main() -> int:
         traceback.print_exc()
         report["attempts"].append({"file": dynamic.name, "sizes": SIZES, "ok": False, "error": repr(e)[:2000]})
         dynamic.unlink(missing_ok=True)
+    # Outside the except block: its traceback would keep the failed check's session (GBs) alive.
+    gc.collect()
+
+    if dynamic not in files:
         print("Dynamic export failed the check; exporting fixed 768 and 640 files.", flush=True)
         for size in (768, 640):
             path = args.out / f"birefnet_lite_{size}.onnx"
@@ -210,6 +223,7 @@ def main() -> int:
                 traceback.print_exc()
                 report["attempts"].append({"file": path.name, "sizes": [size], "ok": False, "error": repr(e)[:2000]})
                 path.unlink(missing_ok=True)
+            gc.collect()
 
     if args.reference and dynamic in files:
         report["iou_vs_v1_at_1024"] = against_reference(dynamic, args.reference, photos)
