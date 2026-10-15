@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-15):** Milestones 1–3 are done and user-tested. Milestone 4 (Backgrounds + export) is built and waiting for the user's test.
+**Status (2026-10-15):** Milestones 1–4 are done and user-tested. Next: Milestone 5 (Batch + Best model).
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
@@ -34,7 +34,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 
 ## Stack
 
-- **Shell:** Tauri 2 (Rust) + React + TypeScript + Vite, pnpm
+- **Shell:** Tauri 2 (Rust) + React + TypeScript + Vite, pnpm. Dev server on port **1430** (HMR 1431), so it runs next to Captions (1420)
 - **Inference:** ONNX Runtime from Rust (`ort` crate), CPU by default, CoreML/DirectML later
   - **Pinned: `ort` 2.0.0-rc.10 = ONNX Runtime 1.22.0, statically linked, on all platforms.** Reason: Intel Mac + macOS 12 support. rc.10 is the last `ort` with a prebuilt `x86_64-apple-darwin` library (rc.11+ and Microsoft's ONNX Runtime ≥ 1.24 dropped Intel Macs; Microsoft's 1.20–1.23 Intel builds need macOS 13.3). pyke's 1.22 library is built for macOS 13.3 too, but it was tested to link and run on macOS 12 (2026-10-13). tract (pure Rust) was measured as the fallback: 2.4× slower
   - **Upgrade path:** when Intel Macs / macOS 12 are dropped, move to the newest `ort` + ONNX Runtime. To keep them, build ONNX Runtime ourselves for `x86_64-apple-darwin` (deployment target 12.0) and link it via `ORT_LIB_LOCATION`, or switch Intel Macs only to tract. Re-run the macOS 12 test and the CPU-baseline check (`cpu.rs`) after any upgrade
@@ -81,7 +81,8 @@ Copy the files into this repo for now. A shared package can come later, once the
 - **Export** (`export.rs`, `session.rs`): every refine edit at **full size** (the working copy's render is reused when it is full size), the cutout scaled premultiplied (no dark fringe), straight-alpha "over" the background, fully transparent pixels cleared (nothing erased stays hidden in the file), written atomically (temp file + rename). Over 16 MP, the last full-size render is kept per edits, so exporting again is quick (48 MP: first export ≈ 8 s, then 1–2 s; WebP encode ≈ 7 s). PNG keeps alpha (RGB when opaque); WebP is lossy with lossless alpha (max 16383 px a side); JPG goes on white when transparent. The original's ICC profile is embedded (ICCP chunk for WebP); EXIF is not copied
 - **Stage:** a colour is CSS; blur (from the 1 MP copy) and image (≤ 4 MP) come from `stage_background`, under the cutout canvas. The Export dialog's preview (`export_preview`, ≤ 0.4 MP) uses the same `export::render`
 - **Export dialog** (⌘E): format, quality 40–100 (WebP/JPG), size, Fit/Fill, preview; settings remembered in localStorage (`store/exportSettings.ts`, sanitized on load); save dialog defaults to `<name>-cutout.<ext>` next to the original; "Show in folder" after saving
-- **Open: macOS 12 binary check.** A local release build fails `check_macos_binary.py` with a weak import of `_dispatch_once_f` (libSystem). It is not from libwebp: the build from before libwebp (2d51254) fails the same way, and no crate, C archive, Rust std or ONNX Runtime archive references the symbol, so the linker adds it. The function exists since macOS 10.6. The release workflow (which runs the check on CI's SDK) has never run for Cutout; decide in M6 (check on CI, then on the macOS 12 Mac) before allow-listing anything
+- **macOS 12 binary check:** `check_macos_binary.py` allows exactly one extra weak import, `_dispatch_once_f` from libSystem (user decision, 2026-10-15): it exists since macOS 10.6 and the linker adds it (no crate, C library, Rust std or ONNX Runtime archive references it; also present before libwebp, A/B at 2d51254). Allow nothing else without asking
+- **Dark outline on solid colours (checked 2026-10-15):** the export composites edges with the decontaminated colours (test `exports_composite_the_decontaminated_edge`). A dark line that stays is in the photo under a near-opaque mask (e.g. a dark rim U²-Net counts as subject); fixes are Shift −1…−3, Erase, or Best
 - **UI kit:** `ColorPicker` has a saturation/brightness area and hue bar (the only gradients in the kit: they are the colour space), custom `swatches` and `onCommit`. Editor shortcuts ignore keys from inside dialogs and popovers
 
 ## Screens (v0.1)
@@ -99,7 +100,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 1. ✅ **Scaffold:** repo from the Captions foundations (tokens, UI kit, shell, icon, release config skeleton); Home screen with drop zone; load and display an image
 2. ✅ **Cutout:** `models-v1` mirror release; model download with progress + ONNX inference → mask → RGBA on a checkerboard; Before/After compare
 3. ✅ **Refine:** feather/shift edges, erase/restore brush with undo for brush strokes, zoom/pan
-4. **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets (built 2026-10-15, waiting for the user's test)
+4. ✅ **Backgrounds + export:** transparent/color/blur/image backgrounds; PNG/WebP/JPG export; social size presets
 5. **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
 6. **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, draft pre-release v0.1.0-alpha
 
