@@ -154,7 +154,9 @@ jobs:
           fi
           for f in "$res/THIRD-PARTY-LICENSES.md" "$res/licenses/ONNXRUNTIME-LICENSE.txt" \
                    "$res/licenses/ONNXRUNTIME-ThirdPartyNotices.txt" \
-                   "$res/licenses/LIBWEBP-COPYING.txt" "$res/licenses/LIBWEBP-PATENTS.txt"; do
+                   "$res/licenses/LIBWEBP-COPYING.txt" "$res/licenses/LIBWEBP-PATENTS.txt" \
+                   "$res/licenses/MODEL-U2NET-LICENSE.txt" "$res/licenses/MODEL-U2NET-ONNX-REMBG-LICENSE.txt" \
+                   "$res/licenses/MODEL-BIREFNET-LICENSE.txt"; do
             [[ -f "$f" ]] && echo "ok  $f" || { echo "missing $f"; exit 1; }
           done
 
@@ -166,6 +168,29 @@ jobs:
         run: |
           python3 scripts/check_macos_binary.py --min-macos "$MACOSX_DEPLOYMENT_TARGET" \
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+
+      # The Fast model and Best's 640 file for the self-test, cached by their checksums
+      # (the self-test downloads them from the mirror and verifies them on a cache miss).
+      - name: Cache the self-test models
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cutout-models
+          key: cutout-models-u2net-8d10d2f3-birefnet640-44432bf3
+
+      # Runs the shipped binary: Fast and Best (640, after the memory check and size
+      # selection) on the mug fixture against its mask, then PNG / JPG / WebP / blur exports
+      # through the real pipeline. Needs no display.
+      - name: Self-test the release binary
+        run: |
+          out="src-tauri/target/${{ matrix.target }}/release"
+          case "${{ runner.os }}" in
+            macOS) exe=$(ls -d "$out"/bundle/macos/*.app)/Contents/MacOS/cutout ;;
+            Windows) exe="$out/cutout.exe" ;;
+            *) exe="$out/cutout" ;;
+          esac
+          "$exe" --self-test fixtures/photos/product-mug.jpg \
+            --reference fixtures/photos/masks/product-mug.provisional-mask.png \
+            --models "${{ runner.temp }}/cutout-models"
 
       # Only now, after every check above passed, do files go to the draft release; a failed
       # check never uploads anything. Same file names as tauri-action used to upload.
