@@ -10,6 +10,7 @@ mod memory;
 mod models;
 mod recent;
 mod refine;
+mod selftest;
 mod session;
 #[cfg(test)]
 mod synthetic;
@@ -497,6 +498,12 @@ fn dev_startup_images() -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// The hidden `--self-test` mode for release CI (see `selftest.rs`). `args` excludes the
+/// program name; returns `None` when the app should start normally.
+pub fn self_test(args: &[String]) -> Option<std::process::ExitCode> {
+    selftest::run_if_requested(args)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
