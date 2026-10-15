@@ -1,0 +1,30 @@
+{
+  "cat-tabby.jpg": [
+    0.982,
+    0.0122
+  ],
+  "dog-grass.jpg": [
+    0.981,
+    0.0053
+  ],
+  "graphic-logo.png": [
+    0.998,
+    0.0008
+  ],
+  "low-contrast-polar-bear.jpg": [
+    0.982,
+    0.001
+  ],
+  "person-curly-hair.jpg": [
+    0.989,
+    0.0081
+  ],
+  "product-mug.jpg": [
+    0.996,
+    0.0005
+  ],
+  "small-subject-snow-dog.jpg": [
+    0.984,
+    0.0006
+  ]
+}
