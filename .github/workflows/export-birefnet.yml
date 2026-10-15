@@ -1,0 +1,52 @@
+# Exports BiRefNet_lite (MIT, ZhengPeng7) to ONNX for the "Best" model with
+# scripts/export_birefnet.py, checks the files against PyTorch, and uploads them as a build
+# artifact. Publishing to the models-v2 release is a separate, manual step after the
+# results are measured in the app (see CLAUDE.md, "Models").
+name: Export BiRefNet
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the pinned export tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
+          pip install "numpy<2" pillow==11.0.0 transformers==4.46.3 huggingface-hub==0.26.2 \
+            timm==1.0.11 kornia==0.7.4 einops==0.8.0 onnx==1.17.0 onnxruntime==1.22.0
+          # The author's deform_conv2d ONNX exporter (MIT), pinned.
+          pip install "git+https://github.com/masamitsu-murase/deform_conv2d_onnx_exporter@ed84d9114b4ab17c5e0a5dc8a412c0d57743a402"
+          pip freeze > pip-freeze.txt
+
+      - name: Download the models-v1 file to compare against
+        run: |
+          curl -sSfL -o birefnet_lite_v1.onnx \
+            https://github.com/kreokit/cutout/releases/download/models-v1/birefnet_lite.onnx
+          echo "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333  birefnet_lite_v1.onnx" | sha256sum -c
+
+      - name: Export and check
+        run: |
+          python scripts/export_birefnet.py --out dist --photos fixtures/photos \
+            --reference birefnet_lite_v1.onnx
+          cp pip-freeze.txt dist/
+          cat dist/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: birefnet-export
+          path: dist/
+          retention-days: 14
