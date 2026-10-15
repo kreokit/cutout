@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { Background } from "./background";
 import { CutoutModel } from "./models";
 import { Edits, Render, parseRender } from "./refine";
@@ -90,3 +90,48 @@ export async function exportPreview(
 }
 
 export const revealExport = (path: string) => invoke<void>("reveal_export", { path });
+
+/** One image of "Export all" (batch.rs). */
+export interface BatchItem {
+  path: string;
+  model: CutoutModel;
+  edits: Edits;
+}
+
+export type ItemResult =
+  | { status: "saved"; path: string; dest: string }
+  | { status: "failed"; path: string; error: string }
+  | { status: "skipped"; path: string };
+
+export type BatchProgress =
+  | { kind: "started"; index: number; total: number }
+  | { kind: "finished"; index: number; result: ItemResult };
+
+/** The files "Export all" to `folder` would replace. */
+export const batchConflicts = (folder: string, paths: string[], format: Format) =>
+  invoke<string[]>("batch_conflicts", { folder, paths, format });
+
+/** Exports every item to `folder`; without `replace`, existing files are kept (-2, -3…). */
+export function exportBatch(
+  items: BatchItem[],
+  background: Background,
+  settings: ExportSettings,
+  folder: string,
+  replace: boolean,
+  onProgress: (p: BatchProgress) => void,
+): Promise<ItemResult[]> {
+  const channel = new Channel<BatchProgress>();
+  channel.onmessage = onProgress;
+  return invoke<ItemResult[]>("export_batch", { items, background, settings, folder, replace, onProgress: channel });
+}
+
+export const stopBatch = () => invoke<void>("stop_batch");
+
+/** "12 exported", "11 exported, 1 failed", "3 exported, 9 not exported (stopped)". */
+export function batchSummary(results: ItemResult[]): string {
+  const count = (status: ItemResult["status"]) => results.filter((r) => r.status === status).length;
+  const parts = [`${count("saved")} exported`];
+  if (count("failed")) parts.push(`${count("failed")} failed`);
+  if (count("skipped")) parts.push(`${count("skipped")} not exported (stopped)`);
+  return parts.join(", ");
+}

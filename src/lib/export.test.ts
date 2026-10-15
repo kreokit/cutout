@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_EXPORT, SIZES, exportPath, sanitizeSettings, sizeId } from "./export";
+import { DEFAULT_EXPORT, SIZES, batchSummary, exportPath, sanitizeSettings, sizeId } from "./export";
 
 describe("export", () => {
   it("names the file after the image, next to it", () => {
@@ -34,5 +34,12 @@ describe("export", () => {
       quality: 100,
     });
     expect(sanitizeSettings({ quality: Number.NaN }).quality).toBe(DEFAULT_EXPORT.quality);
+  });
+
+  it("summarises a batch export", () => {
+    const saved = { status: "saved" as const, path: "/a.png", dest: "/out/a-cutout.png" };
+    expect(batchSummary([saved, saved])).toBe("2 exported");
+    expect(batchSummary([saved, { status: "failed", path: "/b.png", error: "x" }])).toBe("1 exported, 1 failed");
+    expect(batchSummary([saved, { status: "skipped", path: "/c.png" }])).toBe("1 exported, 1 not exported (stopped)");
   });
 });

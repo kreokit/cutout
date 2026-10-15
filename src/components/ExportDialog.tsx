@@ -47,11 +47,9 @@ export function ExportDialog({
   onClose: () => void;
 }) {
   const settings = useExportSettings((s) => s.settings);
-  const set = useExportSettings((s) => s.set);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const out = settings.size ?? { width: image.width, height: image.height };
   const tooBigForWebp = settings.format === "webp" && (out.width > WEBP_MAX_SIDE || out.height > WEBP_MAX_SIDE);
-  const lossy = settings.format !== "png";
 
   const run = async () => {
     const dest = await save({
@@ -121,74 +119,12 @@ export function ExportDialog({
       <div className="export-body">
         <ExportPreview image={image} model={model} edits={edits} background={background} settings={settings} />
         <div className="export-controls">
-          <Field label="Format">
-            <Segmented<Format>
-              label="Format"
-              value={settings.format}
-              onChange={(format) => set({ format })}
-              disabled={exporting}
-              options={FORMATS}
-            />
-          </Field>
-          {lossy && (
-            <Field label="Quality">
-              <div className="slider-row">
-                <Slider
-                  label="Quality"
-                  value={settings.quality}
-                  min={QUALITY_MIN}
-                  max={QUALITY_MAX}
-                  disabled={exporting}
-                  onChange={(quality) => set({ quality })}
-                />
-                <span className="slider-value">{settings.quality}</span>
-              </div>
-            </Field>
-          )}
-          <Field label="Size">
-            <Select<SizeId>
-              label="Size"
-              value={sizeId(settings.size)}
-              disabled={exporting}
-              onChange={(id) => set({ size: SIZES.find((s) => s.id === id)!.size })}
-              options={SIZES.map((s) => {
-                const size = s.size ?? { width: image.width, height: image.height };
-                return { value: s.id, label: s.label, hint: `${size.width} × ${size.height}` };
-              })}
-            />
-          </Field>
-          <Field
-            label="Framing"
-            hint={
-              settings.size === null
-                ? "The original size keeps the photo's framing."
-                : settings.fit === "fit"
-                  ? "Shows the whole photo; the background fills the rest."
-                  : "Fills the frame around the subject, never cutting it off."
-            }
-          >
-            <Segmented<Fit>
-              label="Framing"
-              value={settings.size === null ? "fit" : settings.fit}
-              onChange={(fit) => set({ fit })}
-              disabled={exporting || settings.size === null}
-              options={[
-                { value: "fit", label: "Fit" },
-                { value: "fill", label: "Fill" },
-              ]}
-            />
-          </Field>
-          {settings.format === "jpg" && background.kind === "transparent" && (
-            <p className="ui-field-hint">JPG has no transparency: the background will be white.</p>
-          )}
-          {settings.format === "png" && background.kind === "transparent" && (
-            <p className="ui-field-hint">PNG keeps the transparency.</p>
-          )}
-          {tooBigForWebp && (
-            <p className="ui-field-hint export-warning">
-              WebP images can be at most {WEBP_MAX_SIDE} px on a side. Choose PNG or JPG, or a smaller size.
-            </p>
-          )}
+          <ExportSettingsFields
+            originalSize={`${image.width} × ${image.height}`}
+            background={background}
+            disabled={exporting}
+            tooBigForWebp={tooBigForWebp}
+          />
           {exporting && <ProgressBar value={null} label="Exporting" />}
         </div>
       </div>
@@ -196,8 +132,98 @@ export function ExportDialog({
   );
 }
 
+/** The settings controls (format, quality, size, framing) with their hints. */
+export function ExportSettingsFields({
+  originalSize,
+  background,
+  disabled,
+  tooBigForWebp,
+}: {
+  /** The hint for "Original": the image's size, or e.g. "each image's own". */
+  originalSize: string;
+  background: Background;
+  disabled: boolean;
+  tooBigForWebp: boolean;
+}) {
+  const settings = useExportSettings((s) => s.settings);
+  const set = useExportSettings((s) => s.set);
+  const lossy = settings.format !== "png";
+  return (
+    <>
+      <Field label="Format">
+        <Segmented<Format>
+          label="Format"
+          value={settings.format}
+          onChange={(format) => set({ format })}
+          disabled={disabled}
+          options={FORMATS}
+        />
+      </Field>
+      {lossy && (
+        <Field label="Quality">
+          <div className="slider-row">
+            <Slider
+              label="Quality"
+              value={settings.quality}
+              min={QUALITY_MIN}
+              max={QUALITY_MAX}
+              disabled={disabled}
+              onChange={(quality) => set({ quality })}
+            />
+            <span className="slider-value">{settings.quality}</span>
+          </div>
+        </Field>
+      )}
+      <Field label="Size">
+        <Select<SizeId>
+          label="Size"
+          value={sizeId(settings.size)}
+          disabled={disabled}
+          onChange={(id) => set({ size: SIZES.find((s) => s.id === id)!.size })}
+          options={SIZES.map((s) => {
+            const hint = s.size ? `${s.size.width} × ${s.size.height}` : originalSize;
+            return { value: s.id, label: s.label, hint };
+          })}
+        />
+      </Field>
+      <Field
+        label="Framing"
+        hint={
+          settings.size === null
+            ? "The original size keeps the photo's framing."
+            : settings.fit === "fit"
+              ? "Shows the whole photo; the background fills the rest."
+              : "Fills the frame around the subject, never cutting it off."
+        }
+      >
+        <Segmented<Fit>
+          label="Framing"
+          value={settings.size === null ? "fit" : settings.fit}
+          onChange={(fit) => set({ fit })}
+          disabled={disabled || settings.size === null}
+          options={[
+            { value: "fit", label: "Fit" },
+            { value: "fill", label: "Fill" },
+          ]}
+        />
+      </Field>
+      {settings.format === "jpg" && background.kind === "transparent" && (
+        <p className="ui-field-hint">JPG has no transparency: the background will be white.</p>
+      )}
+      {settings.format === "png" && background.kind === "transparent" && (
+        <p className="ui-field-hint">PNG keeps the transparency.</p>
+      )}
+      {tooBigForWebp && (
+        <p className="ui-field-hint export-warning">
+          WebP images can be at most {WEBP_MAX_SIDE} px on a side. Choose PNG or JPG, or a smaller size.
+        </p>
+      )}
+    </>
+  );
+}
+
 /** The preview, fitted into a square box on a checkerboard ("latest wins" requests). */
-function ExportPreview({
+export function ExportPreview({
   image,
   model,
   edits,

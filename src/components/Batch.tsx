@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { RotateCcw, TriangleAlert } from "lucide-react";
+import { Download, RotateCcw, TriangleAlert } from "lucide-react";
 import { STAGE_LABELS } from "../lib/cutout";
 import { ImageInfo, fileName } from "../lib/images";
 import { CutoutModel, MODEL_NAMES } from "../lib/models";
@@ -10,6 +10,7 @@ import { CutoutState, cutoutKey, isDownloaded, modelFor, useCutouts } from "../s
 import { historyOf, useEdits } from "../store/edits";
 import { openPaths, useSession } from "../store/session";
 import { Button, ProgressBar } from "../ui";
+import { BatchExportDialog } from "./BatchExportDialog";
 import { DownloadCard } from "./CutoutStatus";
 import { TopBar } from "./TopBar";
 import "../styles/batch.css";
@@ -112,6 +113,8 @@ export function Batch() {
   const modelOf = useCutouts((s) => s.modelOf);
   const byImage = useCutouts((s) => s.byImage);
   const run = useCutouts((s) => s.run);
+  const background = useEdits((s) => s.background.value);
+  const [exporting, setExporting] = useState(false);
   const done = images.filter((i) => byImage[cutoutKey(i.path, modelFor({ model, modelOf }, i.path))]?.status === "done").length;
 
   // Cut out every image whose model is downloaded, one after another.
@@ -145,6 +148,9 @@ export function Batch() {
           </span>
         }
       >
+        <Button variant="primary" icon={Download} onClick={() => setExporting(true)}>
+          Export all
+        </Button>
       </TopBar>
       <main className="batch-main">
         {models !== null && !isDownloaded(models, model) && (
@@ -158,6 +164,7 @@ export function Batch() {
           ))}
         </ul>
       </main>
+      {exporting && <BatchExportDialog images={images} background={background} onClose={() => setExporting(false)} />}
     </div>
   );
 }
