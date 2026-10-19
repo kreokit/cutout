@@ -119,6 +119,20 @@ Copy the files into this repo for now. A shared package can come later, once the
 5. ✅ **Batch + second model:** multi-image grid, export all; add the Fast/Best choice
 6. ✅ **Release:** reuse the Captions release workflow (no FFmpeg), licenses incl. model weights, pre-release v0.1.0-alpha (published 2026-10-15)
 
+## Reusable for the next KreoKit apps
+
+Copy these into a new app instead of rebuilding them (Captions' list covers the shared tokens, UI kit, shell, fonts and FFmpeg):
+
+- **ONNX Runtime:** the pinned `ort` 2.0.0-rc.10 / ONNX Runtime 1.22 static setup (`Cargo.toml`), its licence files in `src-tauri/resources/licenses/`, and the CPU baseline check `src-tauri/src/cpu.rs` (x86-64-v2; merge it with other engines' baselines)
+- **Model download + mirror:** `src-tauri/src/models.rs` (download with progress to the app data dir, `.part` file, SHA-256 check against pinned checksums, only from our own `models-vN` releases) and the mirror layout (model + licence + source note + SHA256SUMS; never change a published release)
+- **Reproducible model export in Actions:** `.github/workflows/export-birefnet.yml` + `scripts/export_birefnet.py` (pinned tool versions, output checked against the original framework in ONNX Runtime 1.22)
+- **Memory check:** `src-tauri/src/memory.rs` (total and available memory on macOS, Windows, Linux) and the plan-before-run pattern in `models::plan` (pick a smaller variant or warn)
+- **Batch:** the grid (`Batch.tsx`, `batch.css`), "Export all" (`BatchExportDialog.tsx`, `batch.rs`: conflicts listed first, Replace / Keep both / Cancel, progress, Stop, summary) and safe writing (`export::write_new`: hard-link a temporary file into place, so nothing is ever overwritten silently)
+- **Release:** `release.yml` with the bundle check, `scripts/check_macos_binary.py` (two documented allow-listed libSystem symbols; allow nothing else without asking) and `--self-test` (`selftest.rs`, attaches to the console on Windows); CI on Windows to prove the app loads (`ci.yml`)
+- **Home:** `src/styles/home.css` (drop zone + recent grid; mind the macOS 12 WebKit aspect-ratio note) and `relativeTime` with tests (`src/lib/recent.ts`)
+- **Dev aid:** `KREOKIT_DEV_OPEN` opens files at startup in debug builds
+- **Lesson (from Clips M1):** cache files made on request (thumbnails) need a unique temporary name per request: React's StrictMode and two screens can ask at once
+
 ## Tests (our oracle)
 
 - **Synthetic fixtures** (generated, exact masks) are the strict mask tests for now.
