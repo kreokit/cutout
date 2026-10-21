@@ -100,6 +100,10 @@ Copy the files into this repo for now. A shared package can come later, once the
 - **Licences in the app** (`licenses/`): ONNX Runtime (+ ThirdPartyNotices), libwebp (COPYING, PATENTS), the AI models (`MODEL-U2NET-LICENSE.txt` Apache-2.0, `MODEL-U2NET-ONNX-REMBG-LICENSE.txt` MIT, `MODEL-BIREFNET-LICENSE.txt` MIT), Inter (frontend), and `THIRD-PARTY-LICENSES.md`
 - **macOS 12 check on the dev Mac:** after each release run, download the Intel `.app.tar.gz` from the draft and run `check_macos_binary.py`, the self-test (empty `--models`, so the download runs too) and open the app once. Done for v0.1.0-alpha on macOS 12.7.6
 
+## Release checklist
+
+- After publishing, update the kreokit/.github profile README row.
+
 ## Screens (v0.1)
 
 1. **Home:** big drop zone (one or many images), recent files, model picker (Fast / Best)
