@@ -1,7 +1,7 @@
 # KreoKit Cutout: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-15):** Milestones 1–6 are done. v0.1.0-alpha is published as a pre-release (not "latest"; tag at 555c03b, the commit the files were built from): <https://github.com/kreokit/cutout/releases/tag/v0.1.0-alpha>. README and the org profile link to it. Next work comes from the backlog and tester feedback (issues). GitHub's "latest" release is the model mirror `models-v2`, so never link `/releases/latest` for the app.
+**Status (2026-10-15):** Milestones 1–6 are done. v0.1.0-alpha is published as a pre-release (not "latest"; tag at 555c03b, the commit the files were built from): <https://github.com/kreokit/cutout/releases/tag/v0.1.0-alpha>. README and the org profile link to it. Next work comes from the backlog and tester feedback (issues). **No release shows "Latest"** (2026-10-21, user, as in Clips): `models-v1` and `models-v2` were marked pre-releases too, after checking the app (main and the v0.1.0-alpha tag) downloads models only by tag (`…/releases/download/models-vN/<file>`); both downloads re-checked against their pinned SHA-256 afterwards. Create new `models-vN` mirrors as pre-releases, and never link `/releases/latest`.
 
 App #2 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`); reuse its foundations wherever possible.
 
