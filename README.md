@@ -8,6 +8,8 @@
 
 Part of [KreoKit](https://github.com/kreokit), free open-source creator tools.
 
+🌐 **Website: [kreokit.vercel.app/cutout](https://kreokit.vercel.app/cutout)**: download for your computer and see how to install it.
+
 ## Download
 
 **[Get the latest version from Releases →](https://github.com/kreokit/cutout/releases)** (currently [v0.1.0-alpha](https://github.com/kreokit/cutout/releases/tag/v0.1.0-alpha), an early test version)
