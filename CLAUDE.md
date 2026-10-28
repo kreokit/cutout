@@ -103,6 +103,7 @@ Copy the files into this repo for now. A shared package can come later, once the
 ## Release checklist
 
 - After publishing, update the kreokit/.github profile README row.
+- After publishing, update the tag and file names in kreokit/website data/apps.json.
 
 ## Screens (v0.1)
 
